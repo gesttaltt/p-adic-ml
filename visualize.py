@@ -101,7 +101,7 @@ def evaluate_and_plot(vqvae_path, prior_path, save_img_dir='./plots', N=32, devi
         
         # Sample from prior
         p_tensor = torch.full((num_generate,), p, dtype=torch.long, device=device)
-        latent_indices = prior.sample(p_tensor, L=16, temperature=0.7)
+        latent_indices = prior.sample(p_tensor, L=N // 2, temperature=0.7)
         
         # Decode latent indices
         with torch.no_grad():
@@ -171,4 +171,4 @@ def evaluate_and_plot(vqvae_path, prior_path, save_img_dir='./plots', N=32, devi
         print(f"Saved visualization plot to {plot_path}")
 
 if __name__ == "__main__":
-    evaluate_and_plot('./checkpoints/vqvae.pt', './checkpoints/prior.pt')
+    evaluate_and_plot('./checkpoints/vqvae.pt', './checkpoints/prior.pt', N=64)

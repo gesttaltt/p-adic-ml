@@ -159,9 +159,9 @@ def main():
     torch.save(beta_vae.state_dict(), beta_vae_path)
     print(f"Saved Beta-VAE checkpoints to {beta_vae_path}")
     
-    # 3. Load VQ-VAE and Prior
     vqvae_path = os.path.join(args.save_dir, 'vqvae.pt')
     prior_path = os.path.join(args.save_dir, 'prior.pt')
+    beta_vae_metric_path = os.path.join(args.save_dir, 'beta_vae_metric.pt')
     
     if not os.path.exists(vqvae_path) or not os.path.exists(prior_path):
         print(f"Error: Could not find VQ-VAE checkpoints at {vqvae_path} or {prior_path}. Please train VQ-VAE first!")
@@ -175,8 +175,21 @@ def main():
     prior.load_state_dict(torch.load(prior_path, map_location=device))
     prior.to(device)
     
-    # 4. Setup Cascade Router
-    router = CascadeRouter(beta_vae, vq_vae, prior)
+    # Load Aligned Beta-VAE
+    beta_vae_aligned = ConditionalBetaVAE(vocab_size=13, hidden_dim=64, latent_dim=32, N=args.N)
+    if os.path.exists(beta_vae_metric_path):
+        beta_vae_aligned.load_state_dict(torch.load(beta_vae_metric_path, map_location=device))
+        print(f"Loaded Aligned Beta-VAE from {beta_vae_metric_path}")
+    else:
+        print("Warning: beta_vae_metric.pt not found. Aligned Cascade comparison will be skipped.")
+        beta_vae_aligned = None
+        
+    if beta_vae_aligned is not None:
+        beta_vae_aligned.to(device)
+    
+    # 4. Setup Cascade Routers
+    router_unaligned = CascadeRouter(beta_vae, vq_vae, prior)
+    router_aligned = CascadeRouter(beta_vae_aligned, vq_vae, prior) if beta_vae_aligned is not None else None
     
     # 5. Measure Reconstruction Error distributions on Real Data
     print("\n--- Analyzing Reconstruction Error Distributions on Real Data ---")
@@ -211,35 +224,47 @@ def main():
     plt.close()
     print(f"Saved reconstruction error distribution plot to {error_plot_path}")
     
-    # 6. Benchmark Cascade Router
-    thresholds, velocities, precisions, fast_rates = benchmark_cascade(router, args.primes, num_samples=200, device=device)
+    # 6. Benchmark Cascade Routers
+    print("\nBenchmarking Unaligned Cascade...")
+    thresholds, vels_un, precs_un, rates_un = benchmark_cascade(router_unaligned, args.primes, num_samples=200, device=device)
     
-    # Plot Cascade Trade-off Curves
-    fig, ax1 = plt.subplots(figsize=(10, 5), dpi=150)
+    if router_aligned is not None:
+        print("\nBenchmarking Aligned Cascade...")
+        _, vels_al, precs_al, rates_al = benchmark_cascade(router_aligned, args.primes, num_samples=200, device=device)
+    
+    # Plot Cascade Trade-off Curves Comparison
+    fig, ax1 = plt.subplots(figsize=(10, 6), dpi=150)
     
     color = 'tab:green'
     ax1.set_xlabel('Anomaly Detection Threshold (tau)')
     ax1.set_ylabel('Generation Velocity (samples/sec)', color=color)
-    line1 = ax1.plot(thresholds, velocities, marker='o', color=color, label='Generation Velocity')
+    line1 = ax1.plot(thresholds, vels_un, marker='o', linestyle='--', color='lightgreen', label='Velocity (Unaligned Cascade)')
+    lines = line1
+    if router_aligned is not None:
+        line1_al = ax1.plot(thresholds, vels_al, marker='o', color='forestgreen', label='Velocity (Aligned Cascade)')
+        lines += line1_al
     ax1.tick_params(axis='y', labelcolor=color)
     ax1.grid(True, alpha=0.3)
     
     ax2 = ax1.twinx()  
     color = 'tab:blue'
     ax2.set_ylabel('Precision (VQ-VAE Reconstruction Accuracy %)', color=color)
-    line2 = ax2.plot(thresholds, [p * 100 for p in precisions], marker='s', color=color, linestyle='--', label='Generation Precision')
+    line2 = ax2.plot(thresholds, [p * 100 for p in precs_un], marker='s', linestyle=':', color='skyblue', label='Precision (Unaligned Cascade)')
+    lines += line2
+    if router_aligned is not None:
+        line2_al = ax2.plot(thresholds, [p * 100 for p in precs_al], marker='s', color='dodgerblue', label='Precision (Aligned Cascade)')
+        lines += line2_al
     ax2.tick_params(axis='y', labelcolor=color)
     
     # Add legends
-    lines = line1 + line2
     labels = [l.get_label() for l in lines]
-    ax1.legend(lines, labels, loc='center right')
+    ax1.legend(lines, labels, loc='lower left')
     
-    plt.title('Cascade Router: Precision-Velocity Trade-off Curve\n(Varying Anomaly Threshold tau)')
-    tradeoff_plot_path = './plots/cascade_tradeoff.png'
-    plt.savefig(tradeoff_plot_path, bbox_inches='tight')
+    plt.title('Cascade Router Comparison: Aligned vs. Unaligned Beta-VAE\n(Precision-Velocity Trade-off curves)')
+    comparison_plot_path = './plots/cascade_tradeoff_comparison.png'
+    plt.savefig(comparison_plot_path, bbox_inches='tight')
     plt.close()
-    print(f"Saved cascade trade-off plot to {tradeoff_plot_path}")
+    print(f"Saved cascade comparison plot to {comparison_plot_path}")
 
 if __name__ == "__main__":
     main()

@@ -68,7 +68,8 @@ class CascadeRouter:
             
             # Sample discrete latents from VQ-VAE Prior
             with torch.no_grad():
-                latent_indices = self.prior.sample(p_fallback, L=16, temperature=0.7)
+                L = self.vq_vae.N // 2
+                latent_indices = self.prior.sample(p_fallback, L=L, temperature=0.7)
                 quantized = self.vq_vae.quantizer.embedding(latent_indices)
                 logits_vq = self.vq_vae.decode(quantized, p_fallback)
                 x_vq = torch.argmax(logits_vq, dim=-1) # [num_fallback, N]

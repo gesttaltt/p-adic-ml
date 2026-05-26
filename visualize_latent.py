@@ -20,18 +20,18 @@ def project_pca(z, num_components=2):
     projected = torch.matmul(z_centered, Vh[:num_components].t())
     return projected
 
-def evaluate_and_plot_latents(unaligned_path, aligned_path, save_img_dir='./plots'):
+def evaluate_and_plot_latents(unaligned_path, aligned_path, save_img_dir='./plots', N=64):
     os.makedirs(save_img_dir, exist_ok=True)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     # 1. Load Models
-    model_unaligned = ConditionalBetaVAE(vocab_size=13, hidden_dim=64, latent_dim=32, N=32)
+    model_unaligned = ConditionalBetaVAE(vocab_size=13, hidden_dim=64, latent_dim=32, N=N)
     model_unaligned.load_state_dict(torch.load(unaligned_path, map_location=device))
     model_unaligned.to(device)
     model_unaligned.eval()
     
-    model_aligned = ConditionalBetaVAE(vocab_size=13, hidden_dim=64, latent_dim=32, N=32)
+    model_aligned = ConditionalBetaVAE(vocab_size=13, hidden_dim=64, latent_dim=32, N=N)
     model_aligned.load_state_dict(torch.load(aligned_path, map_location=device))
     model_aligned.to(device)
     model_aligned.eval()
@@ -42,7 +42,7 @@ def evaluate_and_plot_latents(unaligned_path, aligned_path, save_img_dir='./plot
     for p in primes_to_plot:
         print(f"\nExtracting latents for {p}-adic numbers...")
         # Generate 400 test samples of rationals and algebraic roots for this prime
-        ds = PadicDataset(primes=[p], N=32, num_samples_per_type=150)
+        ds = PadicDataset(primes=[p], N=N, num_samples_per_type=150)
         
         # Collect inputs
         digits_list = []
@@ -111,4 +111,4 @@ def evaluate_and_plot_latents(unaligned_path, aligned_path, save_img_dir='./plot
         print(f"Saved latent space topology plot to {plot_path}")
 
 if __name__ == "__main__":
-    evaluate_and_plot_latents('./checkpoints/beta_vae.pt', './checkpoints/beta_vae_metric.pt')
+    evaluate_and_plot_latents('./checkpoints/beta_vae.pt', './checkpoints/beta_vae_metric.pt', N=64)
