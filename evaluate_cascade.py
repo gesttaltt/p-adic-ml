@@ -128,7 +128,7 @@ def benchmark_cascade(router, test_primes, num_samples, device):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--primes', type=int, nargs='+', default=[2, 3, 5, 7])
+    parser.add_argument('--primes', type=int, nargs='+', default=[2, 3, 5, 7, 11])
     parser.add_argument('--N', type=int, default=32)
     parser.add_argument('--samples_per_type', type=int, default=600)
     parser.add_argument('--batch_size', type=int, default=128)

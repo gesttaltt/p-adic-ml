@@ -5,7 +5,7 @@ from torch.utils.data import Dataset
 from padic_math import rational_to_padic, solve_poly_padic
 
 class PadicDataset(Dataset):
-    def __init__(self, primes=[2, 3, 5, 7], N=32, num_samples_per_type=1000):
+    def __init__(self, primes=[2, 3, 5, 7, 11], N=32, num_samples_per_type=1000):
         """
         PyTorch Dataset for p-adic integers across different primes.
         primes: list of prime bases to generate data for

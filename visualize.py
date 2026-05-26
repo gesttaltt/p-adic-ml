@@ -87,7 +87,7 @@ def evaluate_and_plot(vqvae_path, prior_path, save_img_dir='./plots', N=32, devi
     prior.eval()
     
     # 2. Generate and Analyze for different primes
-    test_primes = [2, 3, 5, 7]
+    test_primes = [2, 3, 5, 7, 11]
     num_generate = 100
     
     for p in test_primes:

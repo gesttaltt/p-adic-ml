@@ -156,3 +156,5 @@ if __name__ == "__main__":
     run_interpolation('./checkpoints/beta_vae_metric.pt', p=5, N=64)
     print("\n--- Running 7-adic Interpolation ---")
     run_interpolation('./checkpoints/beta_vae_metric.pt', p=7, N=64)
+    print("\n--- Running 11-adic Interpolation ---")
+    run_interpolation('./checkpoints/beta_vae_metric.pt', p=11, N=64)
