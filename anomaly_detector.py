@@ -38,7 +38,7 @@ class CascadeRouter:
         If Beta-VAE's self-reconstruction error is below threshold_tau, it uses the Beta-VAE (fast).
         Otherwise, it falls back to VQ-VAE + Prior (slow but precise).
         p: [B] tensor of primes
-        threshold_tau: float value for routing
+        threshold_tau: float or dict mapping prime values to threshold floats
         """
         B = p.shape[0]
         self.beta_vae.eval()
@@ -53,8 +53,13 @@ class CascadeRouter:
         # 2. Anomaly Detection: compute Beta-VAE self-reconstruction error
         beta_recon_err = get_reconstruction_error(self.beta_vae, x_beta, p, is_vqvae=False) # [B]
         
-        # Determine routing masks
-        fast_mask = beta_recon_err < threshold_tau # [B] (boolean mask)
+        # Determine routing masks (global threshold or dictionary of base-specific thresholds)
+        if isinstance(threshold_tau, dict):
+            thresh_val = torch.tensor([threshold_tau[val.item()] for val in p], device=p.device)
+        else:
+            thresh_val = torch.full_like(p, threshold_tau, dtype=torch.float)
+            
+        fast_mask = beta_recon_err < thresh_val # [B] (boolean mask)
         fallback_indices = (~fast_mask).nonzero(as_tuple=True)[0]
         num_fallback = fallback_indices.shape[0]
         
