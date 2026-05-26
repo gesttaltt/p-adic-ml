@@ -152,4 +152,7 @@ def run_interpolation(aligned_path, p=5, N=32, num_steps=11, save_img_dir='./plo
     print(f"\nSaved interpolation visualization plot to {plot_path}")
 
 if __name__ == "__main__":
-    run_interpolation('./checkpoints/beta_vae_metric.pt', N=64)
+    print("--- Running 5-adic Interpolation ---")
+    run_interpolation('./checkpoints/beta_vae_metric.pt', p=5, N=64)
+    print("\n--- Running 7-adic Interpolation ---")
+    run_interpolation('./checkpoints/beta_vae_metric.pt', p=7, N=64)

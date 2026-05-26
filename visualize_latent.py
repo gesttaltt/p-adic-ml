@@ -37,7 +37,7 @@ def evaluate_and_plot_latents(unaligned_path, aligned_path, save_img_dir='./plot
     model_aligned.eval()
     
     # Primes to analyze
-    primes_to_plot = [2, 3, 5]
+    primes_to_plot = [2, 3, 5, 7]
     
     for p in primes_to_plot:
         print(f"\nExtracting latents for {p}-adic numbers...")
