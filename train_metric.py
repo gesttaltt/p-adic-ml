@@ -37,9 +37,12 @@ def train_beta_vae_metric(model, train_loader, val_loader, epochs, lr, beta, gam
             # Reconstruct latent z
             z = model.reparameterize(mu, logvar)
             
-            # 1. Reconstruction Loss
             B, N, C = logits.shape
-            recon_loss = criterion(logits.reshape(-1, C), digits.reshape(-1)).mean()
+            recon_loss_flat = criterion(logits.reshape(-1, C), digits.reshape(-1))
+            recon_loss_sample = recon_loss_flat.reshape(B, N).mean(dim=-1)
+            import math
+            weights = torch.tensor([math.log(val.item()) + 1.0 for val in p], device=device)
+            recon_loss = (recon_loss_sample * weights).mean()
             
             # 2. KL Loss
             kl_loss = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())

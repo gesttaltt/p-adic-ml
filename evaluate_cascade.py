@@ -37,9 +37,12 @@ def train_beta_vae(model, train_loader, val_loader, epochs, lr, beta, device):
             # Forward pass
             logits, mu, logvar = model(digits, p) # logits: [B, N, vocab_size]
             
-            # Loss calculations
             B, N, C = logits.shape
-            recon_loss = criterion(logits.reshape(-1, C), digits.reshape(-1)).mean()
+            recon_loss_flat = criterion(logits.reshape(-1, C), digits.reshape(-1))
+            recon_loss_sample = recon_loss_flat.reshape(B, N).mean(dim=-1)
+            import math
+            weights = torch.tensor([math.log(val.item()) + 1.0 for val in p], device=device)
+            recon_loss = (recon_loss_sample * weights).mean()
             
             # KL Divergence: -0.5 * sum(1 + logvar - mu^2 - exp(logvar))
             kl_loss = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())

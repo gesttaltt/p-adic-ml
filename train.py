@@ -38,8 +38,10 @@ def train_vqvae(model, train_loader, val_loader, epochs, lr, device):
             targets_flat = digits.reshape(-1)
             
             recon_loss_flat = criterion(logits_flat, targets_flat)
-            # Mask loss where target is not active (actually all target digits are < p, so no extra masking is needed if logit masking is used)
-            recon_loss = recon_loss_flat.mean()
+            recon_loss_sample = recon_loss_flat.reshape(B, N).mean(dim=-1)
+            import math
+            weights = torch.tensor([math.log(val.item()) + 1.0 for val in p], device=device)
+            recon_loss = (recon_loss_sample * weights).mean()
             
             loss = recon_loss + vq_loss
             loss.backward()
