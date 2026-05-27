@@ -3,27 +3,38 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-def get_reconstruction_error(model, digits, p, is_vqvae=False):
+def get_reconstruction_error(model, digits, p, is_vqvae=False, weighted=False, alpha=1.5):
     """
     Computes the average reconstruction cross-entropy loss per sequence.
+    If weighted is True, applies an exponentially decaying weight along the sequence indices.
     digits: [B, N] tensor
     p: [B] tensor
     """
     model.eval()
     with torch.no_grad():
-        if is_vqvae:
-            logits, _, _ = model(digits, p)
-        else:
-            logits, _, _ = model(digits, p)
+        logits, _, _ = model(digits, p)
             
         B, N, C = logits.shape
         criterion = nn.CrossEntropyLoss(reduction='none')
         
         # Flatten to compute Cross Entropy
         loss_flat = criterion(logits.reshape(-1, C), digits.reshape(-1))
-        # Reshape back to [B, N] and take the mean along the sequence dimension N
-        loss_per_sample = loss_flat.reshape(B, N).mean(dim=-1)
+        loss_per_token = loss_flat.reshape(B, N)
         
+        if weighted:
+            exponents = torch.arange(N, dtype=torch.float, device=digits.device).view(1, N)
+            if alpha == 'p':
+                decay_base = p.view(B, 1).float()
+            else:
+                decay_base = torch.tensor(alpha, device=digits.device).view(1, 1)
+            
+            weights = decay_base ** (-exponents) # [B, N]
+            # Normalize each sample's weights to sum to N (so scale is comparable to flat mean)
+            weights_norm = weights / weights.mean(dim=-1, keepdim=True)
+            loss_per_sample = (loss_per_token * weights_norm).mean(dim=-1)
+        else:
+            loss_per_sample = loss_per_token.mean(dim=-1)
+            
     return loss_per_sample
 
 class CascadeRouter:
@@ -32,7 +43,7 @@ class CascadeRouter:
         self.vq_vae = vq_vae
         self.prior = prior
         
-    def generate_cascade(self, p, threshold_tau, device='cpu'):
+    def generate_cascade(self, p, threshold_tau, device='cpu', weighted=False, alpha=1.5):
         """
         Generates p-adic numbers using a cascade of Beta-VAE and VQ-VAE.
         If Beta-VAE's self-reconstruction error is below threshold_tau, it uses the Beta-VAE (fast).
@@ -51,7 +62,9 @@ class CascadeRouter:
         x_beta = self.beta_vae.sample(p, device=device) # [B, N]
         
         # 2. Anomaly Detection: compute Beta-VAE self-reconstruction error
-        beta_recon_err = get_reconstruction_error(self.beta_vae, x_beta, p, is_vqvae=False) # [B]
+        beta_recon_err = get_reconstruction_error(
+            self.beta_vae, x_beta, p, is_vqvae=False, weighted=weighted, alpha=alpha
+        ) # [B]
         
         # Determine routing masks (global threshold or dictionary of base-specific thresholds)
         if isinstance(threshold_tau, dict):

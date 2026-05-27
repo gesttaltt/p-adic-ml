@@ -84,7 +84,7 @@ def train_beta_vae(model, train_loader, val_loader, epochs, lr, beta, device):
         
     return model
 
-def benchmark_cascade(router, test_primes, num_samples, device):
+def benchmark_cascade(router, test_primes, num_samples, device, weighted=False, alpha=1.5):
     """
     Evaluates different thresholds tau for CascadeRouter.
     Returns: list of thresholds, average velocity (samples/sec), precision (VQ-VAE recon accuracy), and routing rates.
@@ -103,11 +103,13 @@ def benchmark_cascade(router, test_primes, num_samples, device):
     p_tensor = torch.tensor(p_batch, dtype=torch.long, device=device)
     B = p_tensor.shape[0]
     
-    print(f"\n--- Benchmarking Cascade Router on {B} generations ---")
+    print(f"\n--- Benchmarking Cascade Router (weighted={weighted}) on {B} generations ---")
     
     for tau in thresholds:
         # Generate with Cascade
-        final_digits, routed_paths, beta_recon_err, elapsed = router.generate_cascade(p_tensor, threshold_tau=tau, device=device)
+        final_digits, routed_paths, beta_recon_err, elapsed = router.generate_cascade(
+            p_tensor, threshold_tau=tau, device=device, weighted=weighted, alpha=alpha
+        )
         
         # 1. Velocity (samples per second)
         velocity = B / elapsed
@@ -118,7 +120,6 @@ def benchmark_cascade(router, test_primes, num_samples, device):
         fast_rates.append(fast_rate)
         
         # 3. Precision (evaluated by VQ-VAE reconstruction accuracy of generated samples)
-        # Since VQ-VAE learned to map structured p-adics, if it reconstructs the generated samples well, they are high quality.
         with torch.no_grad():
             recon_logits, _, _ = router.vq_vae(final_digits, p_tensor)
             recon_digits = torch.argmax(recon_logits, dim=-1)
@@ -129,7 +130,7 @@ def benchmark_cascade(router, test_primes, num_samples, device):
         
     return thresholds, velocities, precisions, fast_rates
 
-def compute_adaptive_thresholds(beta_vae, val_loader, k=1.0, device='cpu'):
+def compute_adaptive_thresholds(beta_vae, val_loader, k=1.0, device='cpu', weighted=False, alpha=1.5):
     """
     Compute base-specific thresholds: tau_p = mu_p + k * sigma_p
     """
@@ -141,7 +142,7 @@ def compute_adaptive_thresholds(beta_vae, val_loader, k=1.0, device='cpu'):
             p = batch['p'].to(device)
             logits, _, _ = beta_vae(digits, p)
             recon_digits = torch.argmax(logits, dim=-1)
-            errs = get_reconstruction_error(beta_vae, recon_digits, p, is_vqvae=False)
+            errs = get_reconstruction_error(beta_vae, recon_digits, p, is_vqvae=False, weighted=weighted, alpha=alpha)
             for i in range(p.shape[0]):
                 prime = p[i].item()
                 if prime not in errors_by_prime:
@@ -156,11 +157,10 @@ def compute_adaptive_thresholds(beta_vae, val_loader, k=1.0, device='cpu'):
         thresholds_dict[prime] = float(mu + k * std)
     return thresholds_dict
 
-def benchmark_adaptive_cascade(router, val_loader, test_primes, num_samples, device):
+def benchmark_adaptive_cascade(router, val_loader, test_primes, num_samples, device, weighted=False, alpha=1.5):
     """
     Evaluates CascadeRouter using adaptive thresholds for different multipliers k.
     """
-    # k multipliers to evaluate: from negative (strict, fallback) to positive (permissive, fast)
     k_vals = [-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0]
     
     velocities = []
@@ -174,14 +174,18 @@ def benchmark_adaptive_cascade(router, val_loader, test_primes, num_samples, dev
     p_tensor = torch.tensor(p_batch, dtype=torch.long, device=device)
     B = p_tensor.shape[0]
     
-    print(f"\n--- Benchmarking Adaptive Cascade Router (k std dev) on {B} generations ---")
+    print(f"\n--- Benchmarking Adaptive Cascade Router (weighted={weighted}, k std dev) on {B} generations ---")
     
     for k in k_vals:
         # Compute adaptive thresholds for this k
-        thresholds_dict = compute_adaptive_thresholds(router.beta_vae, val_loader, k=k, device=device)
+        thresholds_dict = compute_adaptive_thresholds(
+            router.beta_vae, val_loader, k=k, device=device, weighted=weighted, alpha=alpha
+        )
         
         # Generate with Cascade
-        final_digits, routed_paths, beta_recon_err, elapsed = router.generate_cascade(p_tensor, threshold_tau=thresholds_dict, device=device)
+        final_digits, routed_paths, beta_recon_err, elapsed = router.generate_cascade(
+            p_tensor, threshold_tau=thresholds_dict, device=device, weighted=weighted, alpha=alpha
+        )
         
         # Velocity
         velocity = B / elapsed
@@ -201,6 +205,73 @@ def benchmark_adaptive_cascade(router, val_loader, test_primes, num_samples, dev
         print(f"Multiplier k: {k:5.1f} | Fast Path Rate: {fast_rate*100:5.1f}% | Velocity: {velocity:8.1f} smpl/s | VQ-VAE Recon Precision: {precision*100:6.2f}%")
         
     return k_vals, velocities, precisions, fast_rates
+
+def calibrate_threshold(router, val_loader, p_target, device='cpu', weighted=False, alpha=1.5):
+    """
+    Finds the optimal threshold tau that maximizes the fast-path routing rate
+    subject to the constraint that VQ-VAE precision >= p_target.
+    Evaluates on validation data.
+    """
+    router.beta_vae.eval()
+    router.vq_vae.eval()
+    router.prior.eval()
+    
+    # 1. Collect all validation samples
+    all_digits = []
+    all_primes = []
+    for batch in val_loader:
+        all_digits.append(batch['digits'])
+        all_primes.append(batch['p'])
+    all_digits = torch.cat(all_digits, dim=0).to(device)
+    all_primes = torch.cat(all_primes, dim=0).to(device)
+    
+    B = all_digits.shape[0]
+    
+    # 2. Get Beta-VAE reconstructions and self-reconstruction errors
+    with torch.no_grad():
+        logits_beta, _, _ = router.beta_vae(all_digits, all_primes)
+        x_beta = torch.argmax(logits_beta, dim=-1)
+        errs = get_reconstruction_error(router.beta_vae, x_beta, all_primes, weighted=weighted, alpha=alpha)
+        
+    # 3. Sort errors to define candidate thresholds
+    sorted_errs = sorted(list(errs.cpu().numpy()))
+    step = max(1, len(sorted_errs) // 50)
+    candidate_thresholds = [0.0] + [float(sorted_errs[i]) for i in range(0, len(sorted_errs), step)] + [sorted_errs[-1] + 0.1]
+    
+    # 4. Search for the maximum threshold that satisfies the constraint
+    best_tau = 0.0
+    best_rate = 0.0
+    actual_precision = 1.0
+    
+    print(f"\nCalibrating threshold for target precision {p_target*100:.1f}% (weighted={weighted})...")
+    for tau in candidate_thresholds:
+        fast_mask = errs < tau
+        fallback_indices = (~fast_mask).nonzero(as_tuple=True)[0]
+        num_fallback = fallback_indices.shape[0]
+        
+        final_digits = x_beta.clone()
+        if num_fallback > 0:
+            p_fallback = all_primes[fallback_indices]
+            with torch.no_grad():
+                logits_vq, _, _ = router.vq_vae(all_digits[fallback_indices], p_fallback)
+                x_vq = torch.argmax(logits_vq, dim=-1)
+            final_digits[fallback_indices] = x_vq
+            
+        with torch.no_grad():
+            recon_logits, _, _ = router.vq_vae(final_digits, all_primes)
+            recon_digits = torch.argmax(recon_logits, dim=-1)
+            precision = (recon_digits == final_digits).float().mean().item()
+            
+        rate = (B - num_fallback) / B
+        if precision >= p_target:
+            best_tau = tau
+            best_rate = rate
+            actual_precision = precision
+        else:
+            break
+            
+    print(f"  Calibrated: tau = {best_tau:.4f} | Est. Routing Rate = {best_rate*100:.1f}% | Est. Precision = {actual_precision*100:.2f}%")
+    return best_tau
 
 def main():
     parser = argparse.ArgumentParser()
@@ -300,74 +371,92 @@ def main():
     plt.close()
     print(f"Saved reconstruction error distribution plot to {error_plot_path}")
     
-    # 6. Benchmark Cascade Routers
-    print("\nBenchmarking Unaligned Cascade (Global Threshold)...")
-    thresholds, vels_un, precs_un, rates_un = benchmark_cascade(router_unaligned, args.primes, num_samples=200, device=device)
-    
-    print("\nBenchmarking Unaligned Cascade (Adaptive Threshold)...")
-    k_vals, vels_adap_un, precs_adap_un, rates_adap_un = benchmark_adaptive_cascade(
-        router_unaligned, val_loader_full, args.primes, num_samples=200, device=device
-    )
-    
-    vels_al, precs_al = None, None
-    vels_adap_al, precs_adap_al = None, None
+    # 6. Run Constraint-Based Calibration
     if router_aligned is not None:
-        print("\nBenchmarking Aligned Cascade (Global Threshold)...")
-        _, vels_al, precs_al, rates_al = benchmark_cascade(router_aligned, args.primes, num_samples=200, device=device)
+        print("\n=======================================================")
+        print("         THRESHOLD CALIBRATION ON VALIDATION DATA      ")
+        print("=======================================================")
+        calibrate_threshold(router_aligned, val_loader_full, p_target=0.98, device=device, weighted=False)
+        calibrate_threshold(router_aligned, val_loader_full, p_target=0.95, device=device, weighted=False)
+        calibrate_threshold(router_aligned, val_loader_full, p_target=0.90, device=device, weighted=False)
         
-        print("\nBenchmarking Aligned Cascade (Adaptive Threshold)...")
-        _, vels_adap_al, precs_adap_al, rates_adap_al = benchmark_adaptive_cascade(
-            router_aligned, val_loader_full, args.primes, num_samples=200, device=device
+        calibrate_threshold(router_aligned, val_loader_full, p_target=0.98, device=device, weighted=True, alpha=1.5)
+        calibrate_threshold(router_aligned, val_loader_full, p_target=0.95, device=device, weighted=True, alpha=1.5)
+        calibrate_threshold(router_aligned, val_loader_full, p_target=0.90, device=device, weighted=True, alpha=1.5)
+        print("=======================================================\n")
+        
+    # 7. Benchmark Aligned Cascade Router under different gating methods
+    if router_aligned is not None:
+        # A. Global Standard
+        print("\nBenchmarking Aligned Cascade (Global Standard)...")
+        thresholds, vels_g_std, precs_g_std, _ = benchmark_cascade(
+            router_aligned, args.primes, num_samples=200, device=device, weighted=False
         )
         
-    # Plot Cascade Trade-off Curves Comparison (Pareto Frontier Style: Precision vs Velocity)
-    plt.figure(figsize=(10, 6), dpi=150)
-    
-    # Unaligned VAE curves
-    plt.plot(vels_un, [p * 100 for p in precs_un], marker='x', linestyle='--', color='#ff8a65', label='Global Threshold (Unaligned VAE)')
-    plt.plot(vels_adap_un, [p * 100 for p in precs_adap_un], marker='o', linestyle='--', color='#ff7043', label='Adaptive Threshold (Unaligned VAE)')
-    
-    # Aligned VAE curves
-    if router_aligned is not None:
-        plt.plot(vels_al, [p * 100 for p in precs_al], marker='x', color='#4fc3f7', label='Global Threshold (Aligned VAE)')
-        plt.plot(vels_adap_al, [p * 100 for p in precs_adap_al], marker='o', color='#0288d1', linewidth=2.5, label='Adaptive Threshold (Aligned VAE)')
+        # B. Global Ultrametric-Weighted
+        print("\nBenchmarking Aligned Cascade (Global Ultrametric-Weighted)...")
+        _, vels_g_w, precs_g_w, _ = benchmark_cascade(
+            router_aligned, args.primes, num_samples=200, device=device, weighted=True, alpha=1.5
+        )
         
-        # Annotate a few points on Aligned Adaptive curve
-        # Choose k = 0.0, 1.0, 2.0
-        for target_k, label in [(0.0, 'k=0.0'), (1.0, 'k=1.0'), (2.0, 'k=2.0')]:
-            if target_k in k_vals:
-                idx = k_vals.index(target_k)
-                x = vels_adap_al[idx]
-                y = precs_adap_al[idx] * 100
+        # C. Adaptive Standard
+        print("\nBenchmarking Aligned Cascade (Adaptive Standard)...")
+        k_vals, vels_a_std, precs_a_std, _ = benchmark_adaptive_cascade(
+            router_aligned, val_loader_full, args.primes, num_samples=200, device=device, weighted=False
+        )
+        
+        # D. Adaptive Ultrametric-Weighted
+        print("\nBenchmarking Aligned Cascade (Adaptive Ultrametric-Weighted)...")
+        _, vels_a_w, precs_a_w, _ = benchmark_adaptive_cascade(
+            router_aligned, val_loader_full, args.primes, num_samples=200, device=device, weighted=True, alpha=1.5
+        )
+        
+        # Plot Cascade Trade-off Curves Comparison (Pareto Frontier Style: Precision vs Velocity)
+        plt.figure(figsize=(10, 6), dpi=150)
+        
+        # Plot curves
+        plt.plot(vels_g_std, [p * 100 for p in precs_g_std], marker='x', linestyle='-', color='#4fc3f7', label='Global Standard Gating')
+        plt.plot(vels_g_w, [p * 100 for p in precs_g_w], marker='s', linestyle='-', color='#0288d1', linewidth=2.5, label='Global Ultrametric Gating (Decay 1.5)')
+        plt.plot(vels_a_std, [p * 100 for p in precs_a_std], marker='x', linestyle='--', color='#ffb74d', label='Adaptive Standard Gating')
+        plt.plot(vels_a_w, [p * 100 for p in precs_a_w], marker='s', linestyle='--', color='#f57c00', label='Adaptive Ultrametric Gating')
+        
+        # Annotate selected points on the Global Ultrametric curve
+        for target_tau, label in [(0.6, 'tau=0.6'), (1.0, 'tau=1.0'), (1.5, 'tau=1.5')]:
+            if target_tau in thresholds:
+                idx = thresholds.index(target_tau)
+                x = vels_g_w[idx]
+                y = precs_g_w[idx] * 100
                 plt.annotate(
-                    label, (x, y), textcoords="offset points", xytext=(-15, 10),
+                    label, (x, y), textcoords="offset points", xytext=(-10, 15),
                     arrowprops=dict(arrowstyle="->", color='#0288d1', lw=0.8),
                     fontsize=9, fontweight='bold', color='#01579b'
                 )
                 
-        # Annotate points on Aligned Global curve
-        for target_tau, label in [(0.6, 'tau=0.6'), (1.0, 'tau=1.0')]:
-            if target_tau in thresholds:
-                idx = thresholds.index(target_tau)
-                x = vels_al[idx]
-                y = precs_al[idx] * 100
+        # Annotate selected points on the Adaptive Ultrametric curve
+        for target_k, label in [(-1.0, 'k=-1.0'), (0.0, 'k=0.0')]:
+            if target_k in k_vals:
+                idx = k_vals.index(target_k)
+                x = vels_a_w[idx]
+                y = precs_a_w[idx] * 100
                 plt.annotate(
                     label, (x, y), textcoords="offset points", xytext=(10, -15),
-                    arrowprops=dict(arrowstyle="->", color='#4fc3f7', lw=0.8),
-                    fontsize=9, color='#0288d1'
+                    arrowprops=dict(arrowstyle="->", color='#f57c00', lw=0.8),
+                    fontsize=9, color='#e65100'
                 )
                 
-    plt.xlabel('Generation Velocity (samples/sec)', fontsize=11, fontweight='bold')
-    plt.ylabel('VQ-VAE Reconstruction Precision (%)', fontsize=11, fontweight='bold')
-    plt.title('Cascade Router Pareto Frontier: Aligned vs. Unaligned VAE\n(Comparing Global vs. Adaptive Prime-Specific Thresholds)', fontsize=13, fontweight='bold')
-    plt.grid(True, linestyle=':', alpha=0.6)
-    plt.legend(loc='lower left', framealpha=0.9)
-    
-    # Tight layout and save
-    comparison_plot_path = './plots/cascade_tradeoff_comparison.png'
-    plt.savefig(comparison_plot_path, bbox_inches='tight')
-    plt.close()
-    print(f"Saved cascade comparison plot to {comparison_plot_path}")
+        plt.xlabel('Generation Velocity (samples/sec)', fontsize=11, fontweight='bold')
+        plt.ylabel('VQ-VAE Reconstruction Precision (%)', fontsize=11, fontweight='bold')
+        plt.title('Advanced Cascade Router Gating Comparison (Aligned VAE)\n(Pareto Frontier of Standard CE vs. Ultrametric Error-Density Routing)', fontsize=13, fontweight='bold')
+        plt.grid(True, linestyle=':', alpha=0.6)
+        plt.legend(loc='lower left', framealpha=0.9)
+        
+        # Save plot
+        comparison_plot_path = './plots/cascade_tradeoff_comparison.png'
+        plt.savefig(comparison_plot_path, bbox_inches='tight')
+        plt.close()
+        print(f"Saved cascade comparison plot to {comparison_plot_path}")
+    else:
+        print("Warning: Aligned Cascade Router not available, skipping gating comparisons.")
 
 if __name__ == "__main__":
     main()
