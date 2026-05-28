@@ -32,7 +32,18 @@ As the number of trained primes scales up, the digit reconstruction accuracy on 
 ### 🌀 Latent Space Topology Scaling
 Enforcing multiple tree topologies onto the same continuous latent space acts as a topological regularizer. As shown in the 6-way PCA projection comparison below, the latent space clusters become cleaner and more separated as we scale the prime set:
 
-![Latent Space PCA Scaling](plots/comparison_p23/latent_space_scaling.png)
+![Alternative text](plots/comparison_p23/latent_space_scaling.png)
+
+---
+
+## ⚡ The Cascade Gating Inference System
+
+Autoregressive prior sampling (VQ-VAE + Prior) is highly precise but slow due to step-by-step generation. Continuous models (Beta-VAE) are extremely fast (one-step feedforward) but approximate. To leverage the strengths of both, this codebase implements a **Cascade Gating System** (`anomaly_detector.py`):
+1. **Fast-Path Generation**: The system samples a candidate sequence from the continuous Beta-VAE.
+2. **Self-Reconstruction Gating**: The Beta-VAE reconstructs its own output. If the cross-entropy reconstruction loss is below a calibrated threshold $\tau_p$, the sequence is deemed valid and routed immediately to the user (Fast Path).
+3. **Slow-Path Fallback**: If the reconstruction loss exceeds $\tau_p$, the sequence is flagged as anomalous or low-quality. The system falls back to the VQ-VAE + Prior (Slow Path) to generate a precise sequence.
+
+This architecture establishes a Pareto-optimal frontier, allowing users to trade off generation velocity (samples/sec) for reconstruction precision by adjusting $\tau_p$.
 
 ---
 
@@ -56,6 +67,29 @@ We map $p$-adic digit sequences $a_0, a_1, \dots, a_{d-1}$ (where $a_i \in \{0, 
 | ![19-adic Tree](plots/padic_tree_19.png) | ![23-adic Tree](plots/padic_tree_23.png) |
 
 *(Blue = Rational sequences, Red = Algebraic sequences, Green = VQ-VAE prior-generated sequences)*
+
+---
+
+## 🧮 Mathematical Foundations
+
+### 1. The $p$-adic Ultrametric
+Unlike real numbers which follow the standard Archimedean metric, $p$-adic numbers are equipped with the **non-Archimedean ultrametric**:
+$$d_p(x, y) \le \max\big(d_p(x, z), d_p(z, y)\big)$$
+This metric ensures that distance is determined solely by the highest common ancestor (the longest common prefix) in the branching tree.
+
+### 2. Hensel's Lemma & Algebraic Sequences
+Our dataset includes algebraic roots (Red trajectories) generated using **Hensel's Lemma**, which acts as the $p$-adic equivalent of Newton's method for finding root approximations:
+$$x_{n+1} = x_n - \frac{f(x_n)}{f'(x_0)} \pmod{p^{n+1}}$$
+Because Hensel lifting builds roots digit-by-digit, algebraic numbers trace highly structured, non-periodic trajectories down the branching tree, which our VQ-VAE successfully learns to generate.
+
+---
+
+## 🚀 Future Research Directions
+
+We invite contributions and extensions in the following areas:
+* **Hyperbolic Latent Spaces**: Transitioning from a Euclidean latent space ($\mathbb{R}^d$) with a metric alignment loss to a true **Hyperbolic VAE** using Poincaré or Lorentz manifolds in PyTorch.
+* **Capacity Scale-Up**: Expanding the models' hidden dimension (e.g. from 64 to 256) to handle capacity constraints observed when scaling past $p=23$.
+* **Continuous Prime Embeddings**: Replacing the index-based categorical embedding with continuous prime representations to share mathematical features across different bases.
 
 ---
 
