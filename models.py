@@ -50,17 +50,18 @@ class ResidualBlock(nn.Module):
         return x + out
 
 class ConditionalVQVAE(nn.Module):
-    def __init__(self, vocab_size=13, hidden_dim=64, codebook_size=64, latent_dim=32, N=32, cond_dim=16):
+    def __init__(self, vocab_size=13, hidden_dim=64, codebook_size=64, latent_dim=32, N=32, cond_dim=16, prime_vocab_size=20):
         super(ConditionalVQVAE, self).__init__()
         self.vocab_size = vocab_size
         self.hidden_dim = hidden_dim
         self.N = N
         self.cond_dim = cond_dim
+        self.prime_vocab_size = prime_vocab_size
         
         # Embeddings
         self.digit_emb = nn.Embedding(vocab_size, hidden_dim)
         self.pos_emb = nn.Parameter(torch.zeros(1, N, hidden_dim))
-        self.prime_emb = nn.Embedding(20, cond_dim)  # supporting primes up to 19
+        self.prime_emb = nn.Embedding(prime_vocab_size, cond_dim)  # supporting primes up to prime_vocab_size-1
         self.cond_proj = nn.Linear(cond_dim, hidden_dim)
         
         # Encoder (downsamples N -> N/2)
@@ -120,15 +121,16 @@ class ConditionalVQVAE(nn.Module):
         return logits, vq_loss, indices
 
 class PriorGRU(nn.Module):
-    def __init__(self, codebook_size=64, latent_dim=32, cond_dim=16, hidden_size=128, num_layers=2):
+    def __init__(self, codebook_size=64, latent_dim=32, cond_dim=16, hidden_size=128, num_layers=2, prime_vocab_size=20):
         super(PriorGRU, self).__init__()
         self.codebook_size = codebook_size
         # The input vocabulary is codebook_size + 1 (the last index is the SOS token)
         self.vocab_size = codebook_size + 1
         self.sos_token = codebook_size
+        self.prime_vocab_size = prime_vocab_size
         
         self.token_emb = nn.Embedding(self.vocab_size, latent_dim)
-        self.prime_emb = nn.Embedding(20, cond_dim)
+        self.prime_emb = nn.Embedding(prime_vocab_size, cond_dim)
         
         # Input to GRU: token embedding + prime embedding
         self.gru = nn.GRU(
