@@ -1,8 +1,13 @@
 # p-adic Generative Models & Hyperbolic Representation Learning
 
-This repository explores the intersection of **$p$-adic mathematics, deep generative models (VQ-VAEs and Beta-VAEs), and Hyperbolic Representation Learning**. 
+## 📖 About the Project
+This project explores the mathematical intersection of **$p$-adic numbers (ultrametric tree spaces)**, **hyperbolic geometry (Poincaré Disk model)**, and **deep generative models (conditional VQ-VAEs and Beta-VAEs)**. 
 
-We investigate how neural networks represent and generate sequences under the $p$-adic metric (ultrametric tree spaces), and how these discrete hierarchical spaces map onto continuous hyperbolic structures (the Poincaré Disk model).
+### Core Motivation
+Traditional machine learning architectures map hierarchical data into flat Euclidean spaces ($\mathbb{R}^d$), which suffers from geometric distortion (crowding effects). In contrast, trees are discrete representations of hyperbolic space. By combining $p$-adic mathematical structures with conditional VAE architectures, this project:
+1. Embeds hierarchically structured data directly into continuous hyperbolic spaces without distortion.
+2. Mathematically proves that the $p$-adic tree ultrametric is naturally isomorphic to hyperbolic distance inside the Poincaré Disk.
+3. Systematically demonstrates that **multi-task regularization** (joint training across up to 9 distinct prime bases simultaneously) dramatically improves reconstruction accuracy and latent space metric alignment, dropping alignment loss by up to **~90%**.
 
 ---
 
@@ -32,7 +37,7 @@ As the number of trained primes scales up, the digit reconstruction accuracy on 
 ### 🌀 Latent Space Topology Scaling
 Enforcing multiple tree topologies onto the same continuous latent space acts as a topological regularizer. As shown in the 6-way PCA projection comparison below, the latent space clusters become cleaner and more separated as we scale the prime set:
 
-![Alternative text](plots/comparison_p23/latent_space_scaling.png)
+![Latent Space PCA Scaling](plots/comparison_p23/latent_space_scaling.png)
 
 ---
 
@@ -105,15 +110,15 @@ pip install torch matplotlib numpy
 To run the scaling experiments, run:
 ```bash
 # Broad-19 training and evaluation
-python train_broad_p19.py
+python scaling_analysis/train_broad_p19.py
 
 # Broad-23 training and evaluation
-python train_broad_p23.py
+python scaling_analysis/train_broad_p23.py
 ```
 
 ### 3. Generate Poincaré Disk Plots
 To generate Poincaré disk plots dynamically for target primes:
 ```bash
-python poincare_embedding.py
+python scaling_analysis/poincare_embedding.py
 ```
 This generates plots under `plots/poincare_p<p>.png`.
