@@ -7,15 +7,15 @@ from models import ConditionalVQVAE, PriorGRU
 from dataset import PadicDataset
 from visualize import get_path_coords
 
-def generate_tree_plot(vqvae_path, prior_path, p, vocab_size, N=64, save_path='./plots/tree.png', device='cpu', prime_vocab_size=20):
+def generate_tree_plot(vqvae_path, prior_path, p, vocab_size, N=64, save_path='./plots/tree.png', device='cpu'):
     print(f"Generating {p}-adic tree visualization using model at {vqvae_path}...")
-    
+
     # 1. Load Models
-    vqvae = ConditionalVQVAE(vocab_size=vocab_size, hidden_dim=64, codebook_size=64, latent_dim=32, N=N, prime_vocab_size=prime_vocab_size)
+    vqvae = ConditionalVQVAE(vocab_size=vocab_size, hidden_dim=64, codebook_size=64, latent_dim=32, N=N)
     vqvae.load_state_dict(torch.load(vqvae_path, map_location=device))
     vqvae.to(device).eval()
-    
-    prior = PriorGRU(codebook_size=64, latent_dim=32, cond_dim=16, prime_vocab_size=prime_vocab_size)
+
+    prior = PriorGRU(codebook_size=64, latent_dim=32, cond_dim=16)
     prior.load_state_dict(torch.load(prior_path, map_location=device))
     prior.to(device).eval()
     
@@ -86,11 +86,7 @@ def main():
         device=device
     )
     
-    # Copy to artifacts directory
-    artifacts_dir = '/home/gestalt/.gemini/antigravity-cli/brain/e3a409e6-aed7-4ea6-9199-01d8eef3215b'
-    os.system(f"cp ./plots/padic_tree_13.png {artifacts_dir}/")
-    os.system(f"cp ./plots/padic_tree_17.png {artifacts_dir}/")
-    print("Successfully copied tree visualization plots to artifacts folder!")
+    print("Tree visualization plots generated successfully!")
 
 if __name__ == "__main__":
     main()

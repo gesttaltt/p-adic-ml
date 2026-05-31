@@ -36,6 +36,7 @@ def main():
     # Configurations
     # -------------------------------------------------------------
     N = 64
+    hidden_dim = 256   # increase from 64 to test capacity scaling (improvement #1)
     vqvae_epochs = 12
     prior_epochs = 12
     vae_epochs = 15
@@ -44,8 +45,8 @@ def main():
     lr = 1e-3
     beta = 0.05
     gamma = 5.0
-    
-    save_dir = './checkpoints/broad_p19'
+
+    save_dir = f'./checkpoints/broad_p19_hd{hidden_dim}'
     os.makedirs(save_dir, exist_ok=True)
     os.makedirs('./plots/comparison_p19', exist_ok=True)
     
@@ -76,11 +77,11 @@ def main():
     print("\n--- [Step 2] Training Broad-19 VQ-VAE ---")
     vqvae_new = ConditionalVQVAE(
         vocab_size=vocab_size_new,
-        hidden_dim=64,
+        hidden_dim=hidden_dim,
         codebook_size=64,
         latent_dim=32,
         N=N,
-        cond_dim=16
+        cond_dim=16,
     )
     vqvae_new = train_vqvae(vqvae_new, train_loader, val_loader, vqvae_epochs, lr, device)
     torch.save(vqvae_new.state_dict(), vqvae_new_path)
@@ -102,10 +103,10 @@ def main():
     print("\n--- [Step 4] Training Broad-19 Aligned Beta-VAE ---")
     beta_vae_new = ConditionalBetaVAE(
         vocab_size=vocab_size_new,
-        hidden_dim=64,
+        hidden_dim=hidden_dim,
         latent_dim=32,
         N=N,
-        cond_dim=16
+        cond_dim=16,
     )
     beta_vae_new = train_beta_vae_metric(beta_vae_new, train_loader, val_loader, vae_epochs, lr, beta, gamma, device)
     torch.save(beta_vae_new.state_dict(), beta_vae_new_path)

@@ -4,7 +4,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from dataset import PadicDataset
 from beta_vae import ConditionalBetaVAE
-from visualize_latent import project_pca
 
 def get_pca_projection_params(z):
     """
@@ -151,6 +150,116 @@ def run_interpolation(aligned_path, p=5, N=32, num_steps=11, save_img_dir='./plo
     plt.close()
     print(f"\nSaved interpolation visualization plot to {plot_path}")
 
+def run_cross_prime_interpolation(
+    model_path,
+    p_start=2,
+    p_end=5,
+    N=32,
+    num_steps=11,
+    decode_with=5,
+    save_img_dir='./plots',
+):
+    """
+    Interpolate between a sequence from p_start-adic space and one from p_end-adic
+    space inside a shared multi-prime latent space.
+
+    Each intermediate latent z(t) is decoded with `decode_with` to show what digit
+    structure emerges as the path crosses between the two tree topologies.
+
+    decode_with: which prime to use when decoding every interpolation step.
+    """
+    os.makedirs(save_img_dir, exist_ok=True)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    model = ConditionalBetaVAE(vocab_size=max(p_start, p_end, decode_with) + 2, hidden_dim=64, latent_dim=32, N=N)
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.to(device).eval()
+
+    print(f"\nLoading {p_start}-adic and {p_end}-adic sequences...")
+    ds_start = PadicDataset(primes=[p_start], N=N, num_samples_per_type=100)
+    ds_end   = PadicDataset(primes=[p_end],   N=N, num_samples_per_type=100)
+
+    seq_start = next(s['digits'] for s in ds_start if s['type'] != 2)
+    seq_end   = next(s['digits'] for s in ds_end   if s['type'] != 2)
+
+    p_start_t    = torch.tensor([p_start],    dtype=torch.long, device=device)
+    p_end_t      = torch.tensor([p_end],      dtype=torch.long, device=device)
+    p_decode_t   = torch.tensor([decode_with], dtype=torch.long, device=device)
+
+    with torch.no_grad():
+        mu1, _ = model.encode(seq_start.unsqueeze(0).to(device), p_start_t)
+        mu2, _ = model.encode(seq_end.unsqueeze(0).to(device),   p_end_t)
+
+    t_vals = np.linspace(0, 1, num_steps)
+    path_digits = []
+    z_path = []
+
+    for t in t_vals:
+        z_t = (1 - t) * mu1 + t * mu2
+        z_path.append(z_t)
+        with torch.no_grad():
+            logits = model.decode(z_t, p_decode_t)
+            decoded = torch.argmax(logits, dim=-1)[0].cpu().numpy()
+        path_digits.append((t, decoded.tolist()))
+
+    print(f"\n{'t':>5} | Decoded sequence (p={decode_with})")
+    print("-" * 70)
+    for t, seq in path_digits:
+        print(f"{t:>5.2f} | {' '.join(str(d) for d in seq)}")
+
+    # Background samples for PCA context
+    bg_digits, bg_p, bg_residues = [], [], []
+    for ds, prime in [(ds_start, p_start), (ds_end, p_end)]:
+        for s in ds:
+            if s['type'] != 2:
+                bg_digits.append(s['digits'])
+                bg_p.append(prime)
+                bg_residues.append(s['digits'][0].item() + s['digits'][1].item() * prime)
+
+    bg_t = torch.stack(bg_digits).to(device)
+    bg_p_t = torch.tensor(bg_p, dtype=torch.long, device=device)
+
+    with torch.no_grad():
+        mu_bg, _ = model.encode(bg_t, bg_p_t)
+
+    z_mean, Vh_2 = get_pca_projection_params(mu_bg.cpu())
+    bg_2d   = project_new_points(mu_bg.cpu(), z_mean, Vh_2).numpy()
+    path_2d = project_new_points(
+        torch.cat(z_path, dim=0).cpu(), z_mean, Vh_2
+    ).numpy()
+
+    colors = ['#4fc3f7' if p == p_start else '#ff8a65' for p in bg_p]
+
+    plt.figure(figsize=(10, 8), dpi=150)
+    for color, (px, py) in zip(colors, bg_2d):
+        plt.scatter(px, py, c=color, s=12, alpha=0.3)
+
+    # Legend proxies
+    import matplotlib.patches as mpatches
+    plt.scatter([], [], c='#4fc3f7', s=20, label=f'{p_start}-adic samples')
+    plt.scatter([], [], c='#ff8a65', s=20, label=f'{p_end}-adic samples')
+
+    plt.plot(path_2d[:, 0], path_2d[:, 1], color='black', linewidth=2.0, zorder=3)
+    plt.scatter(path_2d[:, 0], path_2d[:, 1], color='red', s=40,
+                edgecolor='black', zorder=4, label='Interpolation path z(t)')
+    plt.scatter(path_2d[0, 0],  path_2d[0, 1],  color='blue',    s=120,
+                edgecolor='black', zorder=5, label=f'z(0): {p_start}-adic start')
+    plt.scatter(path_2d[-1, 0], path_2d[-1, 1], color='magenta', s=120,
+                edgecolor='black', zorder=5, label=f'z(1): {p_end}-adic end')
+
+    plt.title(
+        f"Cross-Prime Interpolation: {p_start}-adic → {p_end}-adic\n"
+        f"(decoded with p={decode_with})"
+    )
+    plt.xlabel("PC 1"); plt.ylabel("PC 2")
+    plt.grid(True, alpha=0.3); plt.legend()
+
+    plot_path = os.path.join(save_img_dir, f'cross_prime_interp_p{p_start}_to_p{p_end}.png')
+    plt.savefig(plot_path, bbox_inches='tight')
+    plt.close()
+    print(f"\nSaved cross-prime interpolation plot to {plot_path}")
+
+
 if __name__ == "__main__":
     print("--- Running 5-adic Interpolation ---")
     run_interpolation('./checkpoints/beta_vae_metric.pt', p=5, N=64)
@@ -158,3 +267,13 @@ if __name__ == "__main__":
     run_interpolation('./checkpoints/beta_vae_metric.pt', p=7, N=64)
     print("\n--- Running 11-adic Interpolation ---")
     run_interpolation('./checkpoints/beta_vae_metric.pt', p=11, N=64)
+
+    # Cross-prime interpolation (requires a model trained on multiple primes)
+    MULTI_PRIME_CKPT = './checkpoints/embedding_comparison/continuous/beta_vae_metric.pt'
+    if os.path.exists(MULTI_PRIME_CKPT):
+        print("\n--- Running Cross-Prime Interpolation (p=2 → p=5) ---")
+        run_cross_prime_interpolation(MULTI_PRIME_CKPT, p_start=2, p_end=5, N=32, decode_with=5)
+        print("\n--- Running Cross-Prime Interpolation (p=2 → p=11) ---")
+        run_cross_prime_interpolation(MULTI_PRIME_CKPT, p_start=2, p_end=11, N=32, decode_with=11)
+    else:
+        print(f"\nSkipping cross-prime interpolation: {MULTI_PRIME_CKPT} not found.")

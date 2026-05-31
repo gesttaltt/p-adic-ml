@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import geoopt
 
 def batch_padic_distance(digits, p):
     """
@@ -74,6 +75,48 @@ def compute_metric_loss(z, digits, p):
     loss = (loss * mask).sum() / num_pairs
     
     return loss
+
+def compute_hyperbolic_metric_loss(z_ball, digits, p, manifold):
+    """
+    Metric alignment loss for Poincaré-ball latents.
+
+    Replaces the Euclidean pairwise distance with geodesic distance on the
+    Poincaré ball. Otherwise identical to compute_metric_loss.
+
+    z_ball : [B, D] — points on the Poincaré ball (output of HyperbolicBetaVAE)
+    manifold : geoopt.PoincareBall instance
+    """
+    B = z_ball.shape[0]
+    if B <= 1:
+        return torch.tensor(0.0, device=z_ball.device)
+
+    D_padic = batch_padic_distance(digits, p)  # [B, B]
+
+    # Vectorised pairwise geodesic distance
+    z1 = z_ball.unsqueeze(1)  # [B, 1, D]
+    z2 = z_ball.unsqueeze(0)  # [1, B, D]
+    D_hyp = manifold.dist(z1, z2)  # [B, B]
+
+    prime_match = (p.unsqueeze(1) == p.unsqueeze(0)).float()
+    diag_mask   = 1.0 - torch.eye(B, device=z_ball.device)
+    mask        = prime_match * diag_mask
+
+    num_pairs = mask.sum()
+    if num_pairs == 0:
+        return torch.tensor(0.0, device=z_ball.device)
+
+    mean_padic = (D_padic * mask).sum() / num_pairs
+    mean_hyp   = (D_hyp   * mask).sum() / num_pairs
+
+    if mean_padic == 0 or mean_hyp == 0:
+        return torch.tensor(0.0, device=z_ball.device)
+
+    D_padic_norm = D_padic / (mean_padic + 1e-8)
+    D_hyp_norm   = D_hyp   / (mean_hyp   + 1e-8)
+
+    loss = ((D_hyp_norm - D_padic_norm) ** 2 * mask).sum() / num_pairs
+    return loss
+
 
 if __name__ == "__main__":
     # Unit tests

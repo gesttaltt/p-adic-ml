@@ -43,15 +43,15 @@ def get_poincare_coords(digits, p, max_depth=16, c=0.25):
         
     return x, y
 
-def generate_poincare_disk(vqvae_path, prior_path, p, vocab_size, N=64, save_path='./plots/poincare.png', device='cpu', prime_vocab_size=20):
+def generate_poincare_disk(vqvae_path, prior_path, p, vocab_size, N=64, save_path='./plots/poincare.png', device='cpu'):
     print(f"Generating Poincaré disk for {p}-adic numbers...")
-    
+
     # 1. Load Models
-    vqvae = ConditionalVQVAE(vocab_size=vocab_size, hidden_dim=64, codebook_size=64, latent_dim=32, N=N, prime_vocab_size=prime_vocab_size)
+    vqvae = ConditionalVQVAE(vocab_size=vocab_size, hidden_dim=64, codebook_size=64, latent_dim=32, N=N)
     vqvae.load_state_dict(torch.load(vqvae_path, map_location=device))
     vqvae.to(device).eval()
-    
-    prior = PriorGRU(codebook_size=64, latent_dim=32, cond_dim=16, prime_vocab_size=prime_vocab_size)
+
+    prior = PriorGRU(codebook_size=64, latent_dim=32, cond_dim=16)
     prior.load_state_dict(torch.load(prior_path, map_location=device))
     prior.to(device).eval()
     
@@ -181,11 +181,7 @@ def main():
         device=device
     )
     
-    # Copy to artifacts directory
-    artifacts_dir = '/home/gestalt/.gemini/antigravity-cli/brain/e3a409e6-aed7-4ea6-9199-01d8eef3215b'
-    for p in [2, 5, 13, 17]:
-        os.system(f"cp ./plots/poincare_p{p}.png {artifacts_dir}/")
-    print("Successfully copied Poincaré disk plots to artifacts folder!")
+    print("Poincaré disk plots generated successfully!")
 
 if __name__ == "__main__":
     main()

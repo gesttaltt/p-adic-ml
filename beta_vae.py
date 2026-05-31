@@ -1,21 +1,21 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from models import PrimeEmbedder
 
 class ConditionalBetaVAE(nn.Module):
-    def __init__(self, vocab_size=13, hidden_dim=64, latent_dim=32, N=32, cond_dim=16, prime_vocab_size=20):
+    def __init__(self, vocab_size=13, hidden_dim=64, latent_dim=32, N=32, cond_dim=16):
         super(ConditionalBetaVAE, self).__init__()
         self.vocab_size = vocab_size
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
         self.N = N
         self.cond_dim = cond_dim
-        self.prime_vocab_size = prime_vocab_size
-        
+
         # Embeddings
         self.digit_emb = nn.Embedding(vocab_size, hidden_dim)
         self.pos_emb = nn.Parameter(torch.zeros(1, N, hidden_dim))
-        self.prime_emb = nn.Embedding(prime_vocab_size, cond_dim)
+        self.prime_emb = PrimeEmbedder(cond_dim)
         self.cond_proj = nn.Linear(cond_dim, hidden_dim)
         
         # Encoder (downsamples N -> N/4)

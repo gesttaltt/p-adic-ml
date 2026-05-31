@@ -52,7 +52,6 @@ def main():
     # Primes for the new model
     primes_new = [2, 3, 5, 7, 11, 13, 17, 19, 23]
     vocab_size_new = 23
-    prime_vocab_size_new = 32  # supporting primes up to 31
     
     # -------------------------------------------------------------
     # 1. Dataset generation
@@ -82,7 +81,6 @@ def main():
         latent_dim=32,
         N=N,
         cond_dim=16,
-        prime_vocab_size=prime_vocab_size_new
     )
     vqvae_new = train_vqvae(vqvae_new, train_loader, val_loader, vqvae_epochs, lr, device)
     torch.save(vqvae_new.state_dict(), vqvae_new_path)
@@ -95,7 +93,6 @@ def main():
         cond_dim=16,
         hidden_size=128,
         num_layers=2,
-        prime_vocab_size=prime_vocab_size_new
     )
     full_loader = DataLoader(dataset_new, batch_size=batch_size, shuffle=False)
     prior_new = train_prior(vqvae_new, prior_new, full_loader, prior_epochs, lr, device)
@@ -109,7 +106,6 @@ def main():
         latent_dim=32,
         N=N,
         cond_dim=16,
-        prime_vocab_size=prime_vocab_size_new
     )
     beta_vae_new = train_beta_vae_metric(beta_vae_new, train_loader, val_loader, vae_epochs, lr, beta, gamma, device)
     torch.save(beta_vae_new.state_dict(), beta_vae_new_path)
@@ -341,9 +337,8 @@ def main():
         N=64,
         save_path='./plots/padic_tree_23.png',
         device=device,
-        prime_vocab_size=prime_vocab_size_new
     )
-    
+
     generate_poincare_disk(
         vqvae_path=vqvae_new_path,
         prior_path=prior_new_path,
@@ -351,14 +346,7 @@ def main():
         vocab_size=vocab_size_new,
         save_path='./plots/poincare_p23.png',
         device=device,
-        prime_vocab_size=prime_vocab_size_new
     )
-    
-    # Copy to artifacts directory
-    artifacts_dir = '/home/gestalt/.gemini/antigravity-cli/brain/e3a409e6-aed7-4ea6-9199-01d8eef3215b'
-    os.system(f"cp ./plots/comparison_p23/*.png {artifacts_dir}/")
-    os.system(f"cp ./plots/padic_tree_23.png {artifacts_dir}/")
-    os.system(f"cp ./plots/poincare_p23.png {artifacts_dir}/")
     
     print("Scaling comparison for p=23 finished successfully!")
 

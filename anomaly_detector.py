@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-def get_reconstruction_error(model, digits, p, is_vqvae=False, weighted=False, alpha=1.5):
+def get_reconstruction_error(model, digits, p, weighted=False, alpha=1.5):
     """
     Computes the average reconstruction cross-entropy loss per sequence.
     If weighted is True, applies an exponentially decaying weight along the sequence indices.
@@ -63,7 +63,7 @@ class CascadeRouter:
         
         # 2. Anomaly Detection: compute Beta-VAE self-reconstruction error
         beta_recon_err = get_reconstruction_error(
-            self.beta_vae, x_beta, p, is_vqvae=False, weighted=weighted, alpha=alpha
+            self.beta_vae, x_beta, p, weighted=weighted, alpha=alpha
         ) # [B]
         
         # Determine routing masks (global threshold or dictionary of base-specific thresholds)

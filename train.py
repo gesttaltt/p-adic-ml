@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import torch
 import torch.nn as nn
@@ -39,7 +40,6 @@ def train_vqvae(model, train_loader, val_loader, epochs, lr, device):
             
             recon_loss_flat = criterion(logits_flat, targets_flat)
             recon_loss_sample = recon_loss_flat.reshape(B, N).mean(dim=-1)
-            import math
             weights = torch.tensor([math.log(val.item()) + 1.0 for val in p], device=device)
             recon_loss = (recon_loss_sample * weights).mean()
             

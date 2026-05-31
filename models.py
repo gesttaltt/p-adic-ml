@@ -1,6 +1,33 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+_PRIME_NORM = 23.0  # normalization baseline; current experiments go up to p=23
+
+class PrimeEmbedder(nn.Module):
+    """Maps a prime value to a cond_dim vector via mathematical features [p/23, log(p)/log(23)].
+
+    Unlike a categorical embedding, this lets the model share learned structure across
+    numerically close primes (e.g. 17 and 19 start with similar representations).
+    """
+    def __init__(self, out_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(2, out_dim),
+            nn.ReLU(),
+            nn.Linear(out_dim, out_dim),
+        )
+
+    def forward(self, p):
+        # p: [B] integer tensor of prime values
+        p_f = p.float()
+        features = torch.stack([
+            p_f / _PRIME_NORM,
+            torch.log(p_f) / math.log(_PRIME_NORM),
+        ], dim=-1)  # [B, 2]
+        return self.net(features)  # [B, out_dim]
+
 
 class VectorQuantizer(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, commitment_cost=0.25):
@@ -50,18 +77,17 @@ class ResidualBlock(nn.Module):
         return x + out
 
 class ConditionalVQVAE(nn.Module):
-    def __init__(self, vocab_size=13, hidden_dim=64, codebook_size=64, latent_dim=32, N=32, cond_dim=16, prime_vocab_size=20):
+    def __init__(self, vocab_size=13, hidden_dim=64, codebook_size=64, latent_dim=32, N=32, cond_dim=16):
         super(ConditionalVQVAE, self).__init__()
         self.vocab_size = vocab_size
         self.hidden_dim = hidden_dim
         self.N = N
         self.cond_dim = cond_dim
-        self.prime_vocab_size = prime_vocab_size
-        
+
         # Embeddings
         self.digit_emb = nn.Embedding(vocab_size, hidden_dim)
         self.pos_emb = nn.Parameter(torch.zeros(1, N, hidden_dim))
-        self.prime_emb = nn.Embedding(prime_vocab_size, cond_dim)  # supporting primes up to prime_vocab_size-1
+        self.prime_emb = PrimeEmbedder(cond_dim)
         self.cond_proj = nn.Linear(cond_dim, hidden_dim)
         
         # Encoder (downsamples N -> N/2)
@@ -121,16 +147,15 @@ class ConditionalVQVAE(nn.Module):
         return logits, vq_loss, indices
 
 class PriorGRU(nn.Module):
-    def __init__(self, codebook_size=64, latent_dim=32, cond_dim=16, hidden_size=128, num_layers=2, prime_vocab_size=20):
+    def __init__(self, codebook_size=64, latent_dim=32, cond_dim=16, hidden_size=128, num_layers=2):
         super(PriorGRU, self).__init__()
         self.codebook_size = codebook_size
         # The input vocabulary is codebook_size + 1 (the last index is the SOS token)
         self.vocab_size = codebook_size + 1
         self.sos_token = codebook_size
-        self.prime_vocab_size = prime_vocab_size
-        
+
         self.token_emb = nn.Embedding(self.vocab_size, latent_dim)
-        self.prime_emb = nn.Embedding(prime_vocab_size, cond_dim)
+        self.prime_emb = PrimeEmbedder(cond_dim)
         
         # Input to GRU: token embedding + prime embedding
         self.gru = nn.GRU(

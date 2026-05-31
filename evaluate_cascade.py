@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import time
 import torch
@@ -40,7 +41,6 @@ def train_beta_vae(model, train_loader, val_loader, epochs, lr, beta, device):
             B, N, C = logits.shape
             recon_loss_flat = criterion(logits.reshape(-1, C), digits.reshape(-1))
             recon_loss_sample = recon_loss_flat.reshape(B, N).mean(dim=-1)
-            import math
             weights = torch.tensor([math.log(val.item()) + 1.0 for val in p], device=device)
             recon_loss = (recon_loss_sample * weights).mean()
             
@@ -142,7 +142,7 @@ def compute_adaptive_thresholds(beta_vae, val_loader, k=1.0, device='cpu', weigh
             p = batch['p'].to(device)
             logits, _, _ = beta_vae(digits, p)
             recon_digits = torch.argmax(logits, dim=-1)
-            errs = get_reconstruction_error(beta_vae, recon_digits, p, is_vqvae=False, weighted=weighted, alpha=alpha)
+            errs = get_reconstruction_error(beta_vae, recon_digits, p, weighted=weighted, alpha=alpha)
             for i in range(p.shape[0]):
                 prime = p[i].item()
                 if prime not in errors_by_prime:
@@ -282,8 +282,18 @@ def main():
     parser.add_argument('--beta_vae_epochs', type=int, default=12)
     parser.add_argument('--beta', type=float, default=1.5, help='KL Divergence weight')
     parser.add_argument('--lr', type=float, default=1e-3)
-    parser.add_argument('--save_dir', type=str, default='./checkpoints')
+    parser.add_argument('--save_dir', type=str, default='./checkpoints',
+                        help='Directory to write newly trained Beta-VAE checkpoint')
+    parser.add_argument('--checkpoint_dir', type=str, default=None,
+                        help='Directory containing pre-trained vqvae.pt / prior.pt / beta_vae_metric.pt '
+                             '(defaults to --save_dir if not set)')
+    parser.add_argument('--vocab_size', type=int, default=13,
+                        help='Vocabulary size for VQ-VAE and Beta-VAE — must match the checkpoint '
+                             '(e.g. 19 for Broad-19, 23 for Broad-23)')
     args = parser.parse_args()
+
+    if args.checkpoint_dir is None:
+        args.checkpoint_dir = args.save_dir
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
@@ -298,32 +308,33 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
     
     # 2. Instantiate and train Conditional Beta-VAE
-    beta_vae = ConditionalBetaVAE(vocab_size=13, hidden_dim=64, latent_dim=32, N=args.N)
+    beta_vae = ConditionalBetaVAE(vocab_size=args.vocab_size, hidden_dim=64, latent_dim=32, N=args.N)
     beta_vae = train_beta_vae(beta_vae, train_loader, val_loader, args.beta_vae_epochs, args.lr, args.beta, device)
-    
+
     # Save Beta-VAE weights
     beta_vae_path = os.path.join(args.save_dir, 'beta_vae.pt')
     torch.save(beta_vae.state_dict(), beta_vae_path)
     print(f"Saved Beta-VAE checkpoints to {beta_vae_path}")
-    
-    vqvae_path = os.path.join(args.save_dir, 'vqvae.pt')
-    prior_path = os.path.join(args.save_dir, 'prior.pt')
-    beta_vae_metric_path = os.path.join(args.save_dir, 'beta_vae_metric.pt')
-    
+
+    vqvae_path        = os.path.join(args.checkpoint_dir, 'vqvae.pt')
+    prior_path        = os.path.join(args.checkpoint_dir, 'prior.pt')
+    beta_vae_metric_path = os.path.join(args.checkpoint_dir, 'beta_vae_metric.pt')
+
     if not os.path.exists(vqvae_path) or not os.path.exists(prior_path):
-        print(f"Error: Could not find VQ-VAE checkpoints at {vqvae_path} or {prior_path}. Please train VQ-VAE first!")
+        print(f"Error: Could not find VQ-VAE checkpoints at {vqvae_path} or {prior_path}. "
+              f"Train VQ-VAE first (train.py) or point --checkpoint_dir at an existing directory.")
         return
-        
-    vq_vae = ConditionalVQVAE(vocab_size=13, hidden_dim=64, codebook_size=64, latent_dim=32, N=args.N)
+
+    vq_vae = ConditionalVQVAE(vocab_size=args.vocab_size, hidden_dim=64, codebook_size=64, latent_dim=32, N=args.N)
     vq_vae.load_state_dict(torch.load(vqvae_path, map_location=device))
     vq_vae.to(device)
-    
+
     prior = PriorGRU(codebook_size=64, latent_dim=32, cond_dim=16)
     prior.load_state_dict(torch.load(prior_path, map_location=device))
     prior.to(device)
-    
+
     # Load Aligned Beta-VAE
-    beta_vae_aligned = ConditionalBetaVAE(vocab_size=13, hidden_dim=64, latent_dim=32, N=args.N)
+    beta_vae_aligned = ConditionalBetaVAE(vocab_size=args.vocab_size, hidden_dim=64, latent_dim=32, N=args.N)
     if os.path.exists(beta_vae_metric_path):
         beta_vae_aligned.load_state_dict(torch.load(beta_vae_metric_path, map_location=device))
         print(f"Loaded Aligned Beta-VAE from {beta_vae_metric_path}")
@@ -348,8 +359,8 @@ def main():
         digits = batch['digits'].to(device)
         p = batch['p'].to(device)
         
-        beta_err = get_reconstruction_error(beta_vae, digits, p, is_vqvae=False)
-        vqvae_err = get_reconstruction_error(vq_vae, digits, p, is_vqvae=True)
+        beta_err = get_reconstruction_error(beta_vae, digits, p)
+        vqvae_err = get_reconstruction_error(vq_vae, digits, p)
         
         beta_errors.extend(beta_err.cpu().numpy())
         vqvae_errors.extend(vqvae_err.cpu().numpy())
