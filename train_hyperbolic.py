@@ -89,7 +89,7 @@ def train(model, train_loader, val_loader, epochs, lr, beta, gamma, device):
             for batch in val_loader:
                 digits = batch['digits'].to(device)
                 p      = batch['p'].to(device)
-                logits, _, _ = model(digits, p)
+                logits, _, _, _ = model(digits, p)
                 preds = torch.argmax(logits, dim=-1)
                 val_correct += (preds == digits).sum().item()
                 val_tokens  += digits.shape[0] * digits.shape[1]
