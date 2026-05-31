@@ -134,7 +134,6 @@ class ConditionalVQVAE(nn.Module):
         logits = self.dec_proj(x) # [B, N, vocab_size]
         
         # Logit Masking: mask out digits >= p
-        # vocab_size is 13.
         mask = torch.arange(self.vocab_size, device=logits.device).unsqueeze(0).unsqueeze(0) >= p.unsqueeze(1).unsqueeze(2)
         logits = logits.masked_fill(mask, -1e9)
         

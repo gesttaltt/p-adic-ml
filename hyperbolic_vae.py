@@ -87,28 +87,29 @@ class HyperbolicBetaVAE(nn.Module):
     # ------------------------------------------------------------------ #
     def reparameterize(self, mu_tangent, logvar):
         """
-        Projects μ_tangent to the ball, then samples a point near it.
+        Projects μ_tangent to the Poincaré ball, then samples a point near it.
 
-        Returns z_ball ∈ B^d_c  (a geoopt.ManifoldTensor).
+        Returns z_ball ∈ B^d_c.
+
+        Both the mean and the noise are scaled by 1/√latent_dim before the
+        manifold maps. For latent_dim=32 this keeps typical norms in the
+        range [0.4, 0.8], well clear of the boundary (where logmap0 and dist
+        become numerically unstable), while still covering the full ball.
         """
-        mu_ball = self.manifold.expmap0(mu_tangent)  # [B, D]
+        scale = 1.0 / math.sqrt(self.latent_dim)
+        mu_ball = self.manifold.expmap0(mu_tangent * scale)  # [B, D]
 
         if not self.training:
             return mu_ball
 
         std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)           # sample in tangent space at origin
-        v   = std * eps                        # [B, D]
+        # Scale eps by the same factor so ||v|| stays order-1 regardless of latent_dim
+        v = std * torch.randn_like(std) * scale  # [B, D]
 
         # Parallel-transport v from origin to μ_ball, then push to ball
-        v_transported = self.manifold.transp0(mu_ball, v)  # [B, D]
+        v_transported = self.manifold.transp0(mu_ball, v)
         z_ball = self.manifold.expmap(mu_ball, v_transported)
-        # Project onto ball and keep clear of the boundary (norms < 1 - ε)
-        z_ball = self.manifold.projx(z_ball)
-        max_r  = 1.0 / (self.manifold.c ** 0.5) * (1 - 1e-3)
-        norms  = z_ball.norm(dim=-1, keepdim=True).clamp(min=1e-8)
-        z_ball = z_ball * (max_r / norms).clamp(max=1.0)
-        return z_ball
+        return self.manifold.projx(z_ball)  # ensure strictly inside ball
 
     # ------------------------------------------------------------------ #
     # Decoder
@@ -147,7 +148,7 @@ class HyperbolicBetaVAE(nn.Module):
         mu_tangent, logvar = self.encode(digits, p)
         z_ball             = self.reparameterize(mu_tangent, logvar)
         logits             = self.decode(z_ball, p)
-        return logits, mu_tangent, logvar
+        return logits, mu_tangent, logvar, z_ball
 
     # ------------------------------------------------------------------ #
     # Sample

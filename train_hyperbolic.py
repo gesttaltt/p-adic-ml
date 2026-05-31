@@ -48,7 +48,7 @@ def train(model, train_loader, val_loader, epochs, lr, beta, gamma, device):
             p      = batch['p'].to(device)
 
             optimizer.zero_grad()
-            logits, mu_tangent, logvar = model(digits, p)
+            logits, mu_tangent, logvar, z_ball = model(digits, p)
 
             # 1. Reconstruction loss
             B, N, C = logits.shape
@@ -57,11 +57,10 @@ def train(model, train_loader, val_loader, epochs, lr, beta, gamma, device):
             weights      = torch.tensor([math.log(v.item()) + 1.0 for v in p], device=device)
             recon_loss   = (recon_sample * weights).mean()
 
-            # 2. Regularization: pull μ toward ball origin
+            # 2. Regularization: pull μ_tangent toward ball origin
             reg_loss = (mu_tangent ** 2).mean()
 
-            # 3. Hyperbolic metric alignment (optional; gamma=0 disables it)
-            z_ball = model.reparameterize(mu_tangent, logvar)
+            # 3. Hyperbolic metric alignment — reuses z_ball from forward (no second sample)
             metric_loss = (
                 compute_hyperbolic_metric_loss(z_ball, digits, p, model.manifold)
                 if gamma > 0 else torch.tensor(0.0, device=device)

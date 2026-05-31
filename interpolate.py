@@ -234,8 +234,6 @@ def run_cross_prime_interpolation(
     for color, (px, py) in zip(colors, bg_2d):
         plt.scatter(px, py, c=color, s=12, alpha=0.3)
 
-    # Legend proxies
-    import matplotlib.patches as mpatches
     plt.scatter([], [], c='#4fc3f7', s=20, label=f'{p_start}-adic samples')
     plt.scatter([], [], c='#ff8a65', s=20, label=f'{p_end}-adic samples')
 
