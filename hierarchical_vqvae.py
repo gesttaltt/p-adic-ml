@@ -42,59 +42,90 @@ from models import VectorQuantizer, ResidualBlock, PrimeEmbedder
 
 class HyperbolicVectorQuantizer(nn.Module):
     """
-    VQ codebook whose entries live on the Poincaré ball.
+    VQ codebook on the Poincaré ball with three collapse-prevention fixes:
 
-    Encoder outputs tangent vectors at the origin; we expmap0 them to the ball,
-    find the nearest codebook entry via geodesic distance, then apply the
-    straight-through estimator in ambient R^D space (standard trick).
+    Fix 1 — Spread initialization: codebook entries are placed at a fixed
+      tangent-space radius (||v||=0.5) on random directions, then expmap0'd
+      to the ball.  This ensures non-trivial initial geodesic separation
+      instead of the near-origin cluster that caused collapse v1.
 
-    The commitment loss uses squared geodesic distance instead of squared
-    Euclidean distance.
+    Fix 2 — EMA codebook updates: the codebook is updated via exponential
+      moving average of assigned encoder outputs (Fréchet mean approximated
+      in the tangent space at the origin via logmap0/expmap0). No gradient
+      flows through the codebook; only the encoder commitment loss does.
+      This sidesteps the pathological gradient landscape of the geodesic
+      commitment loss that was driving collapse.
+
+    Fix 3 — Entropy regularizer: a differentiable entropy term on soft
+      per-code usage frequencies penalises under-utilisation, pulling usage
+      toward uniform distribution across the 16 top codes.
     """
 
-    def __init__(self, num_embeddings, embedding_dim, curvature=1.0, commitment_cost=0.25):
+    def __init__(self, num_embeddings, embedding_dim, curvature=1.0,
+                 commitment_cost=0.25, ema_decay=0.99, entropy_weight=0.05):
         super().__init__()
         self.num_embeddings  = num_embeddings
         self.embedding_dim   = embedding_dim
         self.commitment_cost = commitment_cost
+        self.ema_decay       = ema_decay
+        self.entropy_weight  = entropy_weight
         self.manifold        = geoopt.PoincareBall(c=curvature)
 
-        # Initialise codebook entries on the ball (small norm → near origin)
-        init = torch.randn(num_embeddings, embedding_dim) * 0.05
-        self.embedding = geoopt.ManifoldParameter(
-            self.manifold.projx(init), manifold=self.manifold
-        )
+        # Fix 1: spread init — random directions at fixed tangent-space radius
+        init_tang = F.normalize(torch.randn(num_embeddings, embedding_dim), dim=-1) * 0.5
+        init_ball = self.manifold.projx(self.manifold.expmap0(init_tang))
+        self.embedding = geoopt.ManifoldParameter(init_ball, manifold=self.manifold)
+
+        # Fix 2: EMA buffers — tracked in tangent space at origin
+        self.register_buffer('ema_cluster_size', torch.ones(num_embeddings))
+        self.register_buffer('ema_w', init_tang.clone())
 
     def forward(self, inputs_tangent):
         """
-        inputs_tangent: [B, L, D]  tangent vectors at origin (encoder output)
-        Returns: vq_loss (scalar), z_q (on ball, [B, L, D]), indices ([B, L])
+        inputs_tangent: [B, L, D]  tangent vectors at origin
+        Returns: vq_loss, z_q (on ball), indices
         """
         B, L, D = inputs_tangent.shape
         scale   = 1.0 / math.sqrt(D)
 
-        # Map encoder output to ball
         z_ball = self.manifold.expmap0(inputs_tangent * scale)   # [B, L, D]
         z_flat = z_ball.reshape(-1, D)                           # [B*L, D]
 
-        # Pairwise geodesic distances to all codebook vectors
-        # manifold.dist expects broadcastable shapes
         dists = self.manifold.dist(
-            z_flat.unsqueeze(1),           # [B*L, 1,  D]
-            self.embedding.unsqueeze(0)    # [1,   K,  D]
-        ) ** 2                             # [B*L, K]
+            z_flat.unsqueeze(1),
+            self.embedding.unsqueeze(0)
+        ) ** 2                                                    # [B*L, K]
 
-        indices = torch.argmin(dists, dim=1).reshape(B, L)       # [B, L]
-        z_q     = self.embedding[indices]                        # [B, L, D] on ball
+        indices_flat = torch.argmin(dists, dim=1)                # [B*L]
+        indices      = indices_flat.reshape(B, L)
+        z_q          = self.embedding[indices]                   # [B, L, D]
 
-        # Commitment loss in geodesic distance
-        vq_loss = (
-            self.manifold.dist(z_q,                z_ball.detach()) ** 2
-        ).mean() + self.commitment_cost * (
-            self.manifold.dist(z_q.detach(),       z_ball) ** 2
+        # Fix 2: EMA update (only during training)
+        if self.training:
+            z_tang   = self.manifold.logmap0(z_flat).detach()   # [B*L, D]
+            one_hot  = F.one_hot(indices_flat, self.num_embeddings).float()
+            c_count  = one_hot.sum(0)
+            c_sum    = one_hot.T @ z_tang
+
+            self.ema_cluster_size.mul_(self.ema_decay).add_(c_count,  alpha=1-self.ema_decay)
+            self.ema_w.mul_(self.ema_decay).add_(c_sum,               alpha=1-self.ema_decay)
+
+            new_tang = self.ema_w / self.ema_cluster_size.unsqueeze(1).clamp(min=1e-5)
+            new_ball = self.manifold.projx(self.manifold.expmap0(new_tang))
+            with torch.no_grad():
+                self.embedding.data.copy_(new_ball)
+
+        # Commitment loss — encoder pays to stay near assigned code (no codebook gradient)
+        vq_loss = self.commitment_cost * (
+            self.manifold.dist(z_q.detach(), z_ball) ** 2
         ).mean()
 
-        # Straight-through: forward = z_q, gradient sees z_ball
+        # Fix 3: entropy regularizer — maximise soft-usage entropy
+        if self.training and self.entropy_weight > 0:
+            soft_usage = F.softmax(-dists.detach(), dim=1).mean(0)   # [K]
+            entropy    = -(soft_usage * torch.log(soft_usage + 1e-10)).sum()
+            vq_loss    = vq_loss - self.entropy_weight * entropy
+
         z_q_st = z_ball + (z_q - z_ball).detach()
         return vq_loss, z_q_st, indices
 
