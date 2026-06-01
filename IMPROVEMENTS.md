@@ -173,39 +173,26 @@ Key finding: the success metric (within-code < 0.5× cross-code for 10/16) was n
 
 ---
 
-### 16. Hierarchical VQ-VAE at hd=256
+### 16. Hierarchical VQ-VAE at hd=256 ✅
 
-**Problem**: The hierarchical model was benchmarked at `hidden_dim=64`. All other capacity experiments showed hd=256 gives +10pp on high-branching primes. We don't know if the hierarchical architecture still benefits from capacity scaling, or whether the two-level structure already solves the capacity bottleneck.
+**Result** (Broad-11, N=64, 1.98M params):
+- Val acc: 79.38% (+1.35pp vs hd=64's 78.03%)
+- p=5: 82.30% (+3pp), p=7: 68.89% (+5.7pp), p=11: 46.98% (≈same)
+- Top-prior: 37.15% (nearly 2× hd=64's 19.9%)
+- Bottom-prior: 32.32% (lower than hd=64's 39.6% — sign of better top/bottom factorization)
 
-**Plan**: Retrain `HierarchicalVQVAE` with `hidden_dim=256` on Broad-11, N=64. Same epochs and hyperparameters as the hd=64 run for a fair comparison.
-
-**What to measure**: Val accuracy, per-prime reconstruction accuracy, top/bottom prior accuracy.
-
-**Expected outcome**: If the +18pp hierarchical gain is orthogonal to capacity, hd=256 should add another +5–10pp on top (p=7, p=11 specifically). If the hierarchy already saturates the capacity, gains will be smaller.
-
-**Command**:
-```bash
-python train_hierarchical.py --primes 2 3 5 7 11 --N 64 --hidden_dim 256 \
-  --save_dir ./checkpoints/hierarchical_hd256
-```
+The hierarchy largely solved the capacity bottleneck. hd=256 adds only +3pp on p=5 vs flat model's +10pp gain. Top-prior improvement is the biggest story: larger encoder gives sharper global representations.
 
 ---
 
-### 17. Hierarchical VQ-VAE on Broad-19
+### 17. Hierarchical VQ-VAE on Broad-19 ✅
 
-**Problem**: The hierarchical model was only trained on Broad-11. The key open question from Batch 2 is whether the Broad-23 accuracy dip is fundamental or architectural. The flat VQ-VAE plateaus at Broad-23 even at hd=256. The hierarchical architecture might handle more primes better because each level only models a subset of the total entropy — reducing the per-prime competition for codebook capacity.
+**Result** (Broad-19, N=64, hd=64, 143K params):
+- Val acc: 64.45%
+- p=2: 99.18%, p=5: **82.72%**, p=7: 68.80%, p=11: 52.23%, p=13: 46.78%, p=17: 37.89%, p=19: 34.45%
+- Top-prior: 29.11%, Bottom-prior: 30.57%
 
-**Plan**: Train `HierarchicalVQVAE` on Broad-19 (8 primes, primes up to 19), evaluate on p=2 and p=5.
-
-**What to measure**: VQ-VAE accuracy and metric alignment on p=2 and p=5 vs flat Broad-19 hd=256 (73.15% p=5 accuracy).
-
-**Expected outcome**: If the hierarchical structure mitigates the capacity competition between primes, Broad-19 hierarchical should approach or exceed 73.15% p=5 accuracy with fewer parameters than the flat hd=256 model.
-
-**Command**:
-```bash
-python train_hierarchical.py --primes 2 3 5 7 11 13 17 19 --N 64 \
-  --save_dir ./checkpoints/hierarchical_broad19
-```
+**Key result**: Hierarchical hd=64 Broad-19 achieves 82.72% on p=5 — **+9.6pp over flat hd=256 Broad-19** (73.15%) with 8× fewer parameters. The hierarchy provides a more fundamental improvement than capacity scaling, and the multi-task regularization from 8 primes combines with the hierarchical structure synergistically.
 
 ---
 

@@ -238,22 +238,25 @@ The top-down decoder conditioning forces the top level to capture global branch 
 2. `TopPriorGRU` — autoregressive over $N/4 = 16$ top-codebook indices (codebook 16)
 3. `BotPriorGRU` — autoregressive over $N/2 = 32$ bottom-codebook indices (codebook 64), conditioned on top indices via repeat-interleave upsampling at each GRU step
 
-**Results (Broad-11, $N=64$, hd=64, 141K params total):**
+**Full comparison across all hierarchical configurations ($N=64$):**
 
-| Metric | Flat VQ-VAE | Hierarchical VQ-VAE | Gain |
-| :--- | :---: | :---: | :---: |
-| Val Accuracy (all primes) | $\sim 60\%$ | $\mathbf{78.03\%}$ | +18pp |
-| Recon accuracy $p=2$ | — | $98.40\%$ | — |
-| Recon accuracy $p=3$ | — | $96.81\%$ | — |
-| Recon accuracy $p=5$ | — | $79.35\%$ | — |
-| Recon accuracy $p=7$ | — | $63.19\%$ | — |
-| Recon accuracy $p=11$ | — | $47.18\%$ | — |
-| Top-prior accuracy | — | $19.94\%$ ($3.2\times$ random) | — |
-| Bottom-prior accuracy | — | $39.59\%$ ($25\times$ random) | — |
+| Config | Params | Val Acc | $p=2$ | $p=5$ | $p=7$ | $p=11$ | Top-prior | Bot-prior |
+| :--- | ---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Flat hd=64, Broad-11 | ~300K | $\sim 60\%$ | — | $\sim 60\%$ | — | — | — | — |
+| Flat hd=256, Broad-19 | ~1.2M | — | — | $73.15\%$ | — | — | — | — |
+| **Hier hd=64, Broad-11** | **142K** | $78.03\%$ | $98.40\%$ | $79.35\%$ | $63.19\%$ | $47.18\%$ | $19.9\%$ | $39.6\%$ |
+| **Hier hd=256, Broad-11** | **1.98M** | $79.38\%$ | $98.92\%$ | $82.30\%$ | $68.89\%$ | $46.98\%$ | $37.2\%$ | $32.3\%$ |
+| **Hier hd=64, Broad-19** | **143K** | $64.45\%$ | $99.18\%$ | $\mathbf{82.72\%}$ | $68.80\%$ | $52.23\%$ | $29.1\%$ | $30.6\%$ |
 
-The **+18pp accuracy improvement** over the flat VQ-VAE on the same task with fewer parameters is the most striking result. Two-level quantization lets each codebook model a subset of the total entropy: the top captures which of 16 global tree-branch patterns the sequence follows; the bottom refines the remaining detail. Neither level needs to compress the full signal alone.
+**Key findings:**
 
-**Prior sample quality:** All five primes produce samples with only valid digits ($d < p$). Some prior samples show structured repetition consistent with rational p-adic numbers (e.g. `1 2 1 2 0 0 1 2 0 0 0 1 2 ...` for $p=3$, which matches the periodic pattern of a rational with denominator dividing $p^k - 1$).
+- **+18pp over the flat VQ-VAE** (Broad-11, hd=64): the two-level quantization lets each codebook model a subset of the total entropy. Top captures global branch identity; bottom refines within that branch.
+- **Hierarchical hd=64 Broad-19 beats flat hd=256 Broad-19 by +9.6pp on $p=5$ with 8× fewer parameters.** This is the sharpest result: the hierarchical architecture provides a more fundamental improvement than capacity scaling. The multi-task regularization from 8 primes combines with the hierarchical structure — each top code specializes across more branches, giving the bottom richer conditioning.
+- **hd=256 adds only +3pp on $p=5$** for the hierarchical Broad-11 model (vs +10pp for the flat model). The hierarchy has largely solved the capacity bottleneck at hd=64 — the two levels divide the problem enough that neither is constrained.
+- **Top-prior accuracy jumps from 19.9% → 37.2%** at hd=256, nearly doubling. The bigger encoder gives the top branch sharper global representations. The bottom-prior accuracy drops slightly (39.6% → 32.3%) — a sign of better factorization: the top is now capturing more of the global entropy, leaving the bottom prior with higher conditional uncertainty, which is the intended behavior.
+- **Broad-19 per-prime**: $p=5$ 82.7%, $p=7$ 68.8%, $p=11$ 52.2%, $p=13$ 46.8%, $p=17$ 37.9%, $p=19$ 34.5%. The drop at $p \geq 13$ is expected (high branching, large digit vocabulary). All samples use valid digits throughout.
+
+**Prior sample quality:** All primes produce samples with only valid digits ($d < p$). Some prior samples show structured repetition consistent with rational p-adic numbers (e.g. `1 2 1 2 0 0 1 2 0 0 0 1 2 ...` for $p=3$, which matches the periodic pattern of a rational with denominator dividing $p^k - 1$).
 
 #### Top Codebook Interpretability (`analyze_top_codes.py`)
 
