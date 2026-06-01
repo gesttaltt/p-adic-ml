@@ -83,24 +83,20 @@ The Broad-23 accuracy dip hinted at a capacity bottleneck. We tested this in two
 
 hd=256 wins 3/4 metrics at $N=32$. The 10-point accuracy jump on $p=5$ confirms the capacity bottleneck hypothesis.
 
-#### Broad-19 hd=256 at $N=64$ (`train_broad_p19.py`, continuous PrimeEmbedder)
+#### Broad-19 vs Broad-23 at hd=256, $N=64$
 
-Full training run (12 VQ-VAE epochs + 12 Prior epochs + 15 Beta-VAE epochs) evaluated on a held-out set of 200 sequences per type per prime:
+Full training runs (12 VQ-VAE + 12 Prior + 15 Beta-VAE epochs each) evaluated on 200 sequences per type per prime, using the continuous `PrimeEmbedder` throughout:
 
-| Metric | Broad-19 hd=256 |
-| :--- | :---: |
-| VQ-VAE Accuracy $p=2$ (%) | $\mathbf{99.78}$ |
-| VQ-VAE Accuracy $p=5$ (%) | $\mathbf{73.81}$ |
-| Beta-VAE Metric Alignment $p=2$ | $0.01210$ |
-| Beta-VAE Metric Alignment $p=5$ | $0.01261$ |
+| Metric | Broad-19 hd=256 | Broad-23 hd=256 | Winner |
+| :--- | :---: | :---: | :---: |
+| VQ-VAE Accuracy $p=2$ (%) | **$99.74$** | $96.31$ | B-19 |
+| VQ-VAE Accuracy $p=5$ (%) | **$73.15$** | $64.32$ | B-19 |
+| Beta-VAE Metric Alignment $p=2$ | $0.01198$ | **$0.01183$** | B-23 |
+| Beta-VAE Metric Alignment $p=5$ | **$0.01195$** | $0.01805$ | B-19 |
 
-The $p=5$ VQ-VAE accuracy of **73.81%** is the highest recorded across all configurations — surpassing Broad-17 hd=64 (69.87%) by +3.9pp and Broad-19 hd=64 (67.53%) by +6.3pp. The near-perfect $p=2$ accuracy (99.78%) confirms the binary tree is saturated at this capacity.
+**Broad-19 wins 3/4 metrics.** The $p=5$ accuracy of **73.15%** for Broad-19 hd=256 is the highest recorded across all configurations — surpassing Broad-17 hd=64 (69.87%) by +3.3pp. Critically, the Broad-23 accuracy dip **persists at hd=256**: going from 8 to 9 primes drops $p=5$ accuracy by 8.8pp despite doubling model capacity. This rules out capacity as the primary cause of the Broad-23 plateau; the added 23rd prime creates a regularization burden that outweighs its benefit at this architecture size.
 
-> **Note on metric alignment comparison**: these numbers use the current continuous `PrimeEmbedder` architecture. The original scaling table (Restricted → Broad-23) used the legacy categorical embedding; metric alignment values are not directly comparable across the two architectures.
-
-#### Broad-23 hd=256
-
-Results pending — `train_broad_p23.py` running. Will update once complete.
+> **Note on metric alignment vs original table**: the original scaling table (Restricted → Broad-23 hd=64) used the legacy categorical embedding; these hd=256 numbers use the continuous `PrimeEmbedder` and are not directly comparable across the two architectures.
 
 ---
 
@@ -284,10 +280,10 @@ The Lorentz model and the Poincaré ball are isometric (same geometry, different
 
 ## Future Research Directions
 
-* **Broader Primes at hd=256**: All scaling experiments beyond Broad-17 used `hidden_dim=64`. Re-running Broad-19 through Broad-23 at `hidden_dim=256` would give a clean scaling curve under the new capacity.
-* **Curvature Sweep at Convergence**: The current sweep reports are 3-epoch snapshots. Running the full 15-epoch training across the five curvature configurations would reveal whether higher curvature ($c=2$) offers a meaningful alignment advantage after convergence.
-* **Cross-Prime Interpolation Analysis**: Systematic analysis of the cross-prime interpolation paths (what digit patterns appear mid-path between two prime bases) would characterize how the model represents inter-prime topological relationships.
-* **Hierarchical Prior**: The current prior is a flat GRU over VQ-VAE tokens. A hierarchical prior (e.g., a two-level VQVAE-2 style model) could better capture the tree-structured branching at multiple depths simultaneously.
+* **Curvature Sweep at Convergence**: The current sweep reports are 3-epoch snapshots. Running the full 15-epoch training across $c \in \{0.5, 1.0, 2.0, 5.0\}$ and learnable would reveal whether higher curvature offers a meaningful alignment advantage after convergence, particularly for high-branching primes.
+* **Hyperbolic VAE at hd=256**: The Hyperbolic VAE results used `hidden_dim=64`. Retraining at hd=256 (Broad-11, both Poincaré and Lorentz) would give a fair capacity-matched comparison against the Euclidean hd=256 models.
+* **Cross-Prime Interpolation Analysis**: Systematic analysis of interpolation paths between prime bases — digit-frequency histograms, p-adic distance distributions, and valid-digit fraction at each interpolation step — would characterise whether the shared latent space encodes a topologically meaningful cross-base structure.
+* **Hierarchical Prior**: The current prior is a flat GRU over VQ-VAE tokens. A hierarchical prior (two-level VQ-VAE-2 style, with a top code for branch and a bottom code for local refinement) could better capture the multi-scale structure of $p$-ary trees. Prerequisite: converged capacity experiments above.
 
 ---
 

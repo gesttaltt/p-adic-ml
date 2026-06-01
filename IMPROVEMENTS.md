@@ -76,7 +76,7 @@
 
 ## Batch 2 — Planned
 
-### 9. Broader Primes at hd=256 (Scaling Curve Completion) 🔄 in progress
+### 9. Broader Primes at hd=256 (Scaling Curve Completion) ✅
 
 **Problem**: All scaling experiments beyond Broad-17 used `hidden_dim=64`. The capacity scaling result (hd=256 wins on p=5) was validated only at Broad-19. We don't know whether the Broad-23 accuracy dip persists at higher capacity or was purely a capacity bottleneck.
 
@@ -87,9 +87,7 @@
 
 **Fix applied**: `train_broad_p23.py` updated to load Broad-19 from `./checkpoints/broad_p19_hd256/` (hd=256) instead of the old `./checkpoints/broad_p19/` (hd=64).
 
-**Expected outcome**: If the Broad-23 dip was capacity-driven, hd=256 should close it. If it persists, the plateau reflects a genuine diminishing return from adding the 23rd prime.
-
-**Success metric**: Broad-23 hd=256 VQ-VAE accuracy on p=5 ≥ Broad-19 hd=256.
+**Result**: The dip **persists at hd=256**. Broad-19 wins 3/4 metrics: p=5 accuracy 73.15% vs 64.32%, metric alignment 0.01195 vs 0.01805. Capacity was not the primary cause — the 23rd prime's regularization burden outweighs its benefit at this architecture size. Broad-19 hd=256 sets a new p=5 accuracy record (73.15%), surpassing Broad-17 hd=64 (69.87%) by +3.3pp.
 
 ---
 
