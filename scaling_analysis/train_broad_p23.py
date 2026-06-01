@@ -36,6 +36,7 @@ def main():
     # Configurations
     # -------------------------------------------------------------
     N = 64
+    hidden_dim = 256
     vqvae_epochs = 12
     prior_epochs = 12
     vae_epochs = 15
@@ -45,7 +46,7 @@ def main():
     beta = 0.05
     gamma = 5.0
     
-    save_dir = './checkpoints/broad_p23'
+    save_dir = f'./checkpoints/broad_p23_hd{hidden_dim}'
     os.makedirs(save_dir, exist_ok=True)
     os.makedirs('./plots/comparison_p23', exist_ok=True)
     
@@ -76,7 +77,7 @@ def main():
     print("\n--- [Step 2] Training Broad-23 VQ-VAE ---")
     vqvae_new = ConditionalVQVAE(
         vocab_size=vocab_size_new,
-        hidden_dim=64,
+        hidden_dim=hidden_dim,
         codebook_size=64,
         latent_dim=32,
         N=N,
@@ -102,7 +103,7 @@ def main():
     print("\n--- [Step 4] Training Broad-23 Aligned Beta-VAE ---")
     beta_vae_new = ConditionalBetaVAE(
         vocab_size=vocab_size_new,
-        hidden_dim=64,
+        hidden_dim=hidden_dim,
         latent_dim=32,
         N=N,
         cond_dim=16,

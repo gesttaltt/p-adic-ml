@@ -31,15 +31,21 @@ from models import PrimeEmbedder
 
 class HyperbolicBetaVAE(nn.Module):
     def __init__(self, vocab_size=13, hidden_dim=64, latent_dim=32, N=32,
-                 cond_dim=16, curvature=1.0):
+                 cond_dim=16, curvature=1.0, learnable_curvature=False, manifold='poincare'):
         super().__init__()
         self.vocab_size = vocab_size
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
         self.N          = N
         self.cond_dim   = cond_dim
+        self.manifold_type = manifold
 
-        self.manifold = geoopt.PoincareBall(c=curvature)
+        if manifold == 'poincare':
+            self.manifold = geoopt.PoincareBall(c=curvature, learnable=learnable_curvature)
+        elif manifold == 'lorentz':
+            self.manifold = geoopt.Lorentz(k=curvature, learnable=learnable_curvature)
+        else:
+            raise ValueError(f"Unknown manifold type: {manifold}")
 
         # Shared with ConditionalBetaVAE: prime + digit embeddings
         self.digit_emb  = nn.Embedding(vocab_size, hidden_dim)
@@ -87,29 +93,32 @@ class HyperbolicBetaVAE(nn.Module):
     # ------------------------------------------------------------------ #
     def reparameterize(self, mu_tangent, logvar):
         """
-        Projects μ_tangent to the Poincaré ball, then samples a point near it.
+        Projects μ_tangent to the manifold, then samples a point near it.
 
-        Returns z_ball ∈ B^d_c.
+        Returns z_manifold.
 
         Both the mean and the noise are scaled by 1/√latent_dim before the
         manifold maps. For latent_dim=32 this keeps typical norms in the
-        range [0.4, 0.8], well clear of the boundary (where logmap0 and dist
-        become numerically unstable), while still covering the full ball.
+        range [0.4, 0.8], well clear of the boundary, while still covering the space.
         """
         scale = 1.0 / math.sqrt(self.latent_dim)
-        mu_ball = self.manifold.expmap0(mu_tangent * scale)  # [B, D]
+        mu_manifold = self.manifold.expmap0(mu_tangent * scale)  # [B, D]
 
         if not self.training:
-            return mu_ball
+            return mu_manifold
 
         std = torch.exp(0.5 * logvar)
         # Scale eps by the same factor so ||v|| stays order-1 regardless of latent_dim
         v = std * torch.randn_like(std) * scale  # [B, D]
 
-        # Parallel-transport v from origin to μ_ball, then push to ball
-        v_transported = self.manifold.transp0(mu_ball, v)
-        z_ball = self.manifold.expmap(mu_ball, v_transported)
-        return self.manifold.projx(z_ball)  # ensure strictly inside ball
+        # Project random noise to the tangent space at the origin
+        orig = self.manifold.origin(v.shape, device=v.device, dtype=v.dtype)
+        v_tangent = self.manifold.proju(orig, v)
+
+        # Parallel-transport v_tangent from origin to μ_manifold, then push to manifold
+        v_transported = self.manifold.transp0(mu_manifold, v_tangent)
+        z_manifold = self.manifold.expmap(mu_manifold, v_transported)
+        return self.manifold.projx(z_manifold)  # ensure strictly inside manifold
 
     # ------------------------------------------------------------------ #
     # Decoder
@@ -155,8 +164,8 @@ class HyperbolicBetaVAE(nn.Module):
     # ------------------------------------------------------------------ #
     @torch.no_grad()
     def sample(self, p, device='cpu'):
-        """Draw z from the origin of the ball (prior = wrapped-normal at origin)."""
+        """Draw z from the origin of the manifold (prior = wrapped-normal at origin)."""
         B  = p.shape[0]
-        z0 = torch.zeros(B, self.latent_dim, device=device)
+        z0 = self.manifold.origin((B, self.latent_dim), device=device)
         logits = self.decode(z0, p)
         return torch.argmax(logits, dim=-1)

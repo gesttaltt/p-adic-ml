@@ -1,9 +1,12 @@
 import os
+import argparse
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+
 from dataset import PadicDataset
 from beta_vae import ConditionalBetaVAE
+from hyperbolic_vae import HyperbolicBetaVAE
 
 def get_pca_projection_params(z):
     """
@@ -23,13 +26,16 @@ def project_new_points(z, z_mean, Vh_2):
     z_centered = z - z_mean
     return torch.matmul(z_centered, Vh_2.t())
 
-def run_interpolation(aligned_path, p=5, N=32, num_steps=11, save_img_dir='./plots'):
+def run_interpolation(aligned_path, p=5, N=64, num_steps=11, save_img_dir='./plots',
+                      model_type='euclidean', manifold_type='poincare', hidden_dim=64, latent_dim=32, vocab_size=13):
     os.makedirs(save_img_dir, exist_ok=True)
-    
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     # 1. Load Model
-    model = ConditionalBetaVAE(vocab_size=13, hidden_dim=64, latent_dim=32, N=N)
+    if model_type == 'euclidean':
+        model = ConditionalBetaVAE(vocab_size=vocab_size, hidden_dim=hidden_dim, latent_dim=latent_dim, N=N)
+    else:
+        model = HyperbolicBetaVAE(vocab_size=vocab_size, hidden_dim=hidden_dim, latent_dim=latent_dim, N=N, manifold=manifold_type)
     model.load_state_dict(torch.load(aligned_path, map_location=device))
     model.to(device)
     model.eval()
@@ -69,17 +75,30 @@ def run_interpolation(aligned_path, p=5, N=32, num_steps=11, save_img_dir='./plo
     p_t = torch.tensor([p], dtype=torch.long, device=device)
     
     with torch.no_grad():
-        mu1, _ = model.encode(s1_t, p_t)
-        mu2, _ = model.encode(s2_t, p_t)
+        if model_type == 'euclidean':
+            mu1, _ = model.encode(s1_t, p_t)
+            mu2, _ = model.encode(s2_t, p_t)
+        else:
+            mu1_tang, _ = model.encode(s1_t, p_t)
+            mu2_tang, _ = model.encode(s2_t, p_t)
+            mu1 = model.reparameterize(mu1_tang, torch.zeros_like(mu1_tang))
+            mu2 = model.reparameterize(mu2_tang, torch.zeros_like(mu2_tang))
         
-    # Linear interpolation between latents
     t_vals = np.linspace(0, 1, num_steps)
     interpolated_digits = []
     z_path = []
     
     for t in t_vals:
-        z_t = (1 - t) * mu1 + t * mu2
-        z_path.append(z_t)
+        if model_type == 'euclidean':
+            z_t = (1 - t) * mu1 + t * mu2
+            z_eucl = z_t
+        else:
+            # Geodesic interpolation
+            v = model.manifold.logmap(mu1, mu2)
+            z_t = model.manifold.projx(model.manifold.expmap(mu1, t * v))
+            z_eucl = model.manifold.logmap0(z_t)
+            
+        z_path.append(z_eucl)
         
         with torch.no_grad():
             logits = model.decode(z_t, p_t)
@@ -101,22 +120,23 @@ def run_interpolation(aligned_path, p=5, N=32, num_steps=11, save_img_dir='./plo
     for sample in ds:
         if sample['type'] != 2:
             background_digits.append(sample['digits'])
-            background_p.append(sample['p'])
+            background_p.append(p)
             residues.append(sample['digits'][0].item() + sample['digits'][1].item() * p)
             
-    bg_digits_t = torch.stack(background_digits).to(device)
+    bg_t = torch.stack(background_digits).to(device)
     bg_p_t = torch.tensor(background_p, dtype=torch.long, device=device)
     
     with torch.no_grad():
-        mu_bg, _ = model.encode(bg_digits_t, bg_p_t)
-        
-    # Project to 2D using PCA
+        if model_type == 'euclidean':
+            mu_bg, _ = model.encode(bg_t, bg_p_t)
+        else:
+            mu_bg_tang, _ = model.encode(bg_t, bg_p_t)
+            z_bg = model.reparameterize(mu_bg_tang, torch.zeros_like(mu_bg_tang))
+            mu_bg = model.manifold.logmap0(z_bg)
+            
     z_mean, Vh_2 = get_pca_projection_params(mu_bg.cpu())
     bg_2d = project_new_points(mu_bg.cpu(), z_mean, Vh_2).numpy()
-    
-    # Project the path coordinates
-    z_path_tensor = torch.cat(z_path, dim=0).cpu()
-    path_2d = project_new_points(z_path_tensor, z_mean, Vh_2).numpy()
+    path_2d = project_new_points(torch.cat(z_path, dim=0).cpu(), z_mean, Vh_2).numpy()
     
     # 6. Plotting
     plt.figure(figsize=(10, 8), dpi=150)
@@ -139,13 +159,13 @@ def run_interpolation(aligned_path, p=5, N=32, num_steps=11, save_img_dir='./plo
     plt.annotate('t=0 (Start)', (path_2d[0, 0], path_2d[0, 1]), textcoords="offset points", xytext=(10,10), ha='center', fontweight='bold')
     plt.annotate('t=1 (End)', (path_2d[-1, 0], path_2d[-1, 1]), textcoords="offset points", xytext=(10,10), ha='center', fontweight='bold')
     
-    plt.title(f"Continuous Latent Space Interpolation: {p}-adic Tree Climbing\n(Start and End share prefix {seq1[:2].tolist()})")
+    plt.title(f"Continuous Latent Space Interpolation ({model_type.capitalize()}): {p}-adic Tree Climbing\n(Start and End share prefix {seq1[:2].tolist()})")
     plt.xlabel("PC 1")
     plt.ylabel("PC 2")
     plt.grid(True, alpha=0.3)
     plt.legend()
     
-    plot_path = os.path.join(save_img_dir, f'latent_interpolation_p{p}.png')
+    plot_path = os.path.join(save_img_dir, f'latent_interpolation_p{p}_{model_type}_{manifold_type}.png')
     plt.savefig(plot_path, bbox_inches='tight')
     plt.close()
     print(f"\nSaved interpolation visualization plot to {plot_path}")
@@ -158,20 +178,23 @@ def run_cross_prime_interpolation(
     num_steps=11,
     decode_with=5,
     save_img_dir='./plots',
+    vocab_size=13,
+    model_type='euclidean',
+    manifold_type='poincare',
+    hidden_dim=64,
+    latent_dim=32,
 ):
     """
     Interpolate between a sequence from p_start-adic space and one from p_end-adic
     space inside a shared multi-prime latent space.
-
-    Each intermediate latent z(t) is decoded with `decode_with` to show what digit
-    structure emerges as the path crosses between the two tree topologies.
-
-    decode_with: which prime to use when decoding every interpolation step.
     """
     os.makedirs(save_img_dir, exist_ok=True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    model = ConditionalBetaVAE(vocab_size=max(p_start, p_end, decode_with) + 2, hidden_dim=64, latent_dim=32, N=N)
+    if model_type == 'euclidean':
+        model = ConditionalBetaVAE(vocab_size=vocab_size, hidden_dim=hidden_dim, latent_dim=latent_dim, N=N)
+    else:
+        model = HyperbolicBetaVAE(vocab_size=vocab_size, hidden_dim=hidden_dim, latent_dim=latent_dim, N=N, manifold=manifold_type)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device).eval()
 
@@ -187,16 +210,29 @@ def run_cross_prime_interpolation(
     p_decode_t   = torch.tensor([decode_with], dtype=torch.long, device=device)
 
     with torch.no_grad():
-        mu1, _ = model.encode(seq_start.unsqueeze(0).to(device), p_start_t)
-        mu2, _ = model.encode(seq_end.unsqueeze(0).to(device),   p_end_t)
+        if model_type == 'euclidean':
+            mu1, _ = model.encode(seq_start.unsqueeze(0).to(device), p_start_t)
+            mu2, _ = model.encode(seq_end.unsqueeze(0).to(device),   p_end_t)
+        else:
+            mu1_tang, _ = model.encode(seq_start.unsqueeze(0).to(device), p_start_t)
+            mu2_tang, _ = model.encode(seq_end.unsqueeze(0).to(device),   p_end_t)
+            mu1 = model.reparameterize(mu1_tang, torch.zeros_like(mu1_tang))
+            mu2 = model.reparameterize(mu2_tang, torch.zeros_like(mu2_tang))
 
     t_vals = np.linspace(0, 1, num_steps)
     path_digits = []
     z_path = []
 
     for t in t_vals:
-        z_t = (1 - t) * mu1 + t * mu2
-        z_path.append(z_t)
+        if model_type == 'euclidean':
+            z_t = (1 - t) * mu1 + t * mu2
+            z_eucl = z_t
+        else:
+            v = model.manifold.logmap(mu1, mu2)
+            z_t = model.manifold.projx(model.manifold.expmap(mu1, t * v))
+            z_eucl = model.manifold.logmap0(z_t)
+            
+        z_path.append(z_eucl)
         with torch.no_grad():
             logits = model.decode(z_t, p_decode_t)
             decoded = torch.argmax(logits, dim=-1)[0].cpu().numpy()
@@ -220,13 +256,16 @@ def run_cross_prime_interpolation(
     bg_p_t = torch.tensor(bg_p, dtype=torch.long, device=device)
 
     with torch.no_grad():
-        mu_bg, _ = model.encode(bg_t, bg_p_t)
+        if model_type == 'euclidean':
+            mu_bg, _ = model.encode(bg_t, bg_p_t)
+        else:
+            mu_bg_tang, _ = model.encode(bg_t, bg_p_t)
+            z_bg = model.reparameterize(mu_bg_tang, torch.zeros_like(mu_bg_tang))
+            mu_bg = model.manifold.logmap0(z_bg)
 
     z_mean, Vh_2 = get_pca_projection_params(mu_bg.cpu())
     bg_2d   = project_new_points(mu_bg.cpu(), z_mean, Vh_2).numpy()
-    path_2d = project_new_points(
-        torch.cat(z_path, dim=0).cpu(), z_mean, Vh_2
-    ).numpy()
+    path_2d = project_new_points(torch.cat(z_path, dim=0).cpu(), z_mean, Vh_2).numpy()
 
     colors = ['#4fc3f7' if p == p_start else '#ff8a65' for p in bg_p]
 
@@ -246,32 +285,60 @@ def run_cross_prime_interpolation(
                 edgecolor='black', zorder=5, label=f'z(1): {p_end}-adic end')
 
     plt.title(
-        f"Cross-Prime Interpolation: {p_start}-adic → {p_end}-adic\n"
+        f"Cross-Prime Interpolation ({model_type.capitalize()}): {p_start}-adic → {p_end}-adic\n"
         f"(decoded with p={decode_with})"
     )
     plt.xlabel("PC 1"); plt.ylabel("PC 2")
     plt.grid(True, alpha=0.3); plt.legend()
 
-    plot_path = os.path.join(save_img_dir, f'cross_prime_interp_p{p_start}_to_p{p_end}.png')
+    plot_path = os.path.join(save_img_dir, f'cross_prime_interp_p{p_start}_to_p{p_end}_{model_type}_{manifold_type}.png')
     plt.savefig(plot_path, bbox_inches='tight')
     plt.close()
     print(f"\nSaved cross-prime interpolation plot to {plot_path}")
 
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model_path', type=str, default='./checkpoints/euclidean_n64/beta_vae_metric.pt')
+    parser.add_argument('--model_type', type=str, choices=['euclidean', 'hyperbolic'], default='euclidean')
+    parser.add_argument('--manifold', type=str, choices=['poincare', 'lorentz'], default='poincare')
+    parser.add_argument('--p', type=int, default=5, help='Prime base for single-prime interpolation')
+    parser.add_argument('--N', type=int, default=64, help='Sequence length')
+    parser.add_argument('--hidden_dim', type=int, default=64)
+    parser.add_argument('--latent_dim', type=int, default=32)
+    parser.add_argument('--vocab_size', type=int, default=13)
+    parser.add_argument('--cross_prime', action='store_true', help='Run cross-prime interpolation instead')
+    parser.add_argument('--p_start', type=int, default=2)
+    parser.add_argument('--p_end', type=int, default=5)
+    parser.add_argument('--decode_with', type=int, default=5)
+    parser.add_argument('--save_dir', type=str, default='./plots')
+    args = parser.parse_args()
 
-if __name__ == "__main__":
-    print("--- Running 5-adic Interpolation ---")
-    run_interpolation('./checkpoints/beta_vae_metric.pt', p=5, N=64)
-    print("\n--- Running 7-adic Interpolation ---")
-    run_interpolation('./checkpoints/beta_vae_metric.pt', p=7, N=64)
-    print("\n--- Running 11-adic Interpolation ---")
-    run_interpolation('./checkpoints/beta_vae_metric.pt', p=11, N=64)
-
-    # Cross-prime interpolation (requires a model trained on multiple primes)
-    MULTI_PRIME_CKPT = './checkpoints/embedding_comparison/continuous/beta_vae_metric.pt'
-    if os.path.exists(MULTI_PRIME_CKPT):
-        print("\n--- Running Cross-Prime Interpolation (p=2 → p=5) ---")
-        run_cross_prime_interpolation(MULTI_PRIME_CKPT, p_start=2, p_end=5, N=32, decode_with=5)
-        print("\n--- Running Cross-Prime Interpolation (p=2 → p=11) ---")
-        run_cross_prime_interpolation(MULTI_PRIME_CKPT, p_start=2, p_end=11, N=32, decode_with=11)
+    if args.cross_prime:
+        run_cross_prime_interpolation(
+            model_path=args.model_path,
+            p_start=args.p_start,
+            p_end=args.p_end,
+            N=args.N,
+            decode_with=args.decode_with,
+            save_img_dir=args.save_dir,
+            vocab_size=args.vocab_size,
+            model_type=args.model_type,
+            manifold_type=args.manifold,
+            hidden_dim=args.hidden_dim,
+            latent_dim=args.latent_dim
+        )
     else:
-        print(f"\nSkipping cross-prime interpolation: {MULTI_PRIME_CKPT} not found.")
+        run_interpolation(
+            aligned_path=args.model_path,
+            p=args.p,
+            N=args.N,
+            save_img_dir=args.save_dir,
+            model_type=args.model_type,
+            manifold_type=args.manifold,
+            hidden_dim=args.hidden_dim,
+            latent_dim=args.latent_dim,
+            vocab_size=args.vocab_size
+        )
+
+if __name__ == '__main__':
+    main()

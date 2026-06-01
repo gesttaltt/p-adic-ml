@@ -31,8 +31,10 @@ from hyperbolic_vae import HyperbolicBetaVAE
 from metric_alignment import compute_hyperbolic_metric_loss
 
 
+import geoopt.optim
+
 def train(model, train_loader, val_loader, epochs, lr, beta, gamma, device):
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    optimizer = geoopt.optim.RiemannianAdam(model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss(reduction='none')
 
     print(f"\n--- Training HyperbolicBetaVAE (beta={beta}, gamma={gamma}) ---")
@@ -95,10 +97,23 @@ def train(model, train_loader, val_loader, epochs, lr, beta, gamma, device):
                 val_tokens  += digits.shape[0] * digits.shape[1]
         va = val_correct / val_tokens
 
+        # Retrieve current curvature value
+        if hasattr(model.manifold, 'c'):
+            curv_val = model.manifold.c
+            if isinstance(curv_val, torch.Tensor):
+                curv_val = curv_val.item()
+        elif hasattr(model.manifold, 'k'):
+            curv_val = model.manifold.k
+            if isinstance(curv_val, torch.Tensor):
+                curv_val = curv_val.item()
+        else:
+            curv_val = 0.0
+
         print(
             f"Epoch {epoch+1:02d}/{epochs:02d} | "
             f"Loss: {total_loss/n:.4f} "
             f"(Recon: {total_recon/n:.4f}, Reg: {total_reg/n:.4f}, Metric: {total_metric/n:.4f}) | "
+            f"Curvature: {curv_val:.4f} | "
             f"Train Acc: {ta*100:.2f}% | Val Acc: {va*100:.2f}%"
         )
 
@@ -118,7 +133,11 @@ def main():
     parser.add_argument('--gamma',           type=float, default=5.0,
                         help='Weight on hyperbolic metric alignment (0 to disable)')
     parser.add_argument('--curvature',       type=float, default=1.0,
-                        help='Poincaré ball curvature c')
+                        help='Initial curvature (c for Poincaré, k for Lorentz)')
+    parser.add_argument('--learnable_curvature', action='store_true',
+                        help='Optimize the curvature parameter during training')
+    parser.add_argument('--manifold',        type=str,   choices=['poincare', 'lorentz'], default='poincare',
+                        help='Manifold type to use')
     parser.add_argument('--hidden_dim',      type=int,   default=64)
     parser.add_argument('--latent_dim',      type=int,   default=32)
     parser.add_argument('--save_dir',        type=str,   default='./checkpoints/hyperbolic')
@@ -144,6 +163,8 @@ def main():
         latent_dim=args.latent_dim,
         N=args.N,
         curvature=args.curvature,
+        learnable_curvature=args.learnable_curvature,
+        manifold=args.manifold,
     )
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Parameters: {total_params:,}")
@@ -155,6 +176,61 @@ def main():
     save_path = os.path.join(args.save_dir, 'hyperbolic_vae.pt')
     torch.save(model.state_dict(), save_path)
     print(f"\nSaved to {save_path}")
+
+    # Final evaluation for report
+    model.eval()
+    val_correct = 0
+    val_tokens = 0
+    val_metric_loss = 0.0
+    val_batches = 0
+    with torch.no_grad():
+        for batch in val_loader:
+            digits = batch['digits'].to(device)
+            p      = batch['p'].to(device)
+            logits, mu_tangent, logvar, z_ball = model(digits, p)
+            preds = torch.argmax(logits, dim=-1)
+            val_correct += (preds == digits).sum().item()
+            val_tokens  += digits.shape[0] * digits.shape[1]
+            
+            # Compute metric loss
+            metric_loss = compute_hyperbolic_metric_loss(z_ball, digits, p, model.manifold)
+            val_metric_loss += metric_loss.item()
+            val_batches += 1
+            
+    val_acc = val_correct / val_tokens
+    avg_val_metric = val_metric_loss / val_batches if val_batches > 0 else 0.0
+
+    # Retrieve final curvature value
+    if hasattr(model.manifold, 'c'):
+        final_curv = model.manifold.c
+        if isinstance(final_curv, torch.Tensor):
+            final_curv = final_curv.item()
+    elif hasattr(model.manifold, 'k'):
+        final_curv = model.manifold.k
+        if isinstance(final_curv, torch.Tensor):
+            final_curv = final_curv.item()
+    else:
+        final_curv = args.curvature
+
+    # Save markdown report
+    report_path = os.path.join(args.save_dir, 'training_report.md')
+    with open(report_path, 'w') as f:
+        f.write("# Hyperbolic VAE Training Baseline Report\n\n")
+        f.write(f"This baseline configures a large-capacity Hyperbolic/Lorentz Beta-VAE model with learnable curvature.\n\n")
+        f.write("## Hyperparameters\n")
+        f.write(f"- **Manifold Type**: `{args.manifold}`\n")
+        f.write(f"- **Hidden Dimension**: `{args.hidden_dim}`\n")
+        f.write(f"- **Latent Dimension**: `{args.latent_dim}`\n")
+        f.write(f"- **Sequence Length N**: `{args.N}`\n")
+        f.write(f"- **Primes**: `{args.primes}`\n")
+        f.write(f"- **Epochs**: `{args.epochs}`\n")
+        f.write(f"- **Beta (Reg Cost)**: `{args.beta}`\n")
+        f.write(f"- **Gamma (Metric Alignment Cost)**: `{args.gamma}`\n")
+        f.write(f"- **Optimized Curvature**: `{final_curv:.5f}`\n\n")
+        f.write("## Evaluation Metrics\n")
+        f.write(f"- **Final Validation Accuracy**: `{val_acc * 100:.2f}%`\n")
+        f.write(f"- **Final Metric Alignment Loss**: `{avg_val_metric:.6f}`\n")
+    print(f"Report saved to {report_path}")
 
 
 if __name__ == '__main__':

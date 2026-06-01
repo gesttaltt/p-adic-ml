@@ -337,11 +337,12 @@ def main():
         device=device
     )
     
-    # Copy to artifacts directory
-    artifacts_dir = '/home/gestalt/.gemini/antigravity-cli/brain/e3a409e6-aed7-4ea6-9199-01d8eef3215b'
-    os.system(f"cp ./plots/comparison_p19/*.png {artifacts_dir}/")
-    os.system(f"cp ./plots/padic_tree_19.png {artifacts_dir}/")
-    os.system(f"cp ./plots/poincare_p19.png {artifacts_dir}/")
+    # Copy to artifacts directory if environment variable is set and exists
+    artifacts_dir = os.environ.get('ARTIFACTS_DIR')
+    if artifacts_dir and os.path.exists(artifacts_dir):
+        os.system(f"cp ./plots/comparison_p19/*.png {artifacts_dir}/")
+        os.system(f"cp ./plots/padic_tree_19.png {artifacts_dir}/")
+        os.system(f"cp ./plots/poincare_p19.png {artifacts_dir}/")
     
     print("Scaling comparison for p=19 finished successfully!")
 

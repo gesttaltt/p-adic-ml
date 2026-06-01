@@ -200,6 +200,21 @@ def main():
     print("  (* = best for that metric)")
     print(f"\nCheckpoints saved under {os.path.abspath(SAVE_BASE)}/")
 
+    # Save markdown report
+    os.makedirs(SAVE_BASE, exist_ok=True)
+    report_path = os.path.join(SAVE_BASE, 'report.md')
+    with open(report_path, 'w') as f:
+        f.write("# Capacity Scaling Experiment Report\n\n")
+        f.write(f"Evaluating Broad-19 configuration (primes={PRIMES}) across different network capacities.\n\n")
+        f.write("| Metric | hidden_dim=64 | hidden_dim=256 |\n")
+        f.write("| :--- | :---: | :---: |\n")
+        for label, metric_key, higher_better, fmt in rows:
+            scale  = 100 if metric_key.startswith('vq') else 1
+            val_64 = results['hd64'][metric_key] * scale
+            val_256 = results['hd256'][metric_key] * scale
+            f.write(f"| {label} | {val_64:.5f} | {val_256:.5f} |\n")
+    print(f"Report saved to {report_path}")
+
 
 if __name__ == '__main__':
     main()
