@@ -35,14 +35,75 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import geoopt
 
 from models import VectorQuantizer, ResidualBlock, PrimeEmbedder
+
+
+class HyperbolicVectorQuantizer(nn.Module):
+    """
+    VQ codebook whose entries live on the Poincaré ball.
+
+    Encoder outputs tangent vectors at the origin; we expmap0 them to the ball,
+    find the nearest codebook entry via geodesic distance, then apply the
+    straight-through estimator in ambient R^D space (standard trick).
+
+    The commitment loss uses squared geodesic distance instead of squared
+    Euclidean distance.
+    """
+
+    def __init__(self, num_embeddings, embedding_dim, curvature=1.0, commitment_cost=0.25):
+        super().__init__()
+        self.num_embeddings  = num_embeddings
+        self.embedding_dim   = embedding_dim
+        self.commitment_cost = commitment_cost
+        self.manifold        = geoopt.PoincareBall(c=curvature)
+
+        # Initialise codebook entries on the ball (small norm → near origin)
+        init = torch.randn(num_embeddings, embedding_dim) * 0.05
+        self.embedding = geoopt.ManifoldParameter(
+            self.manifold.projx(init), manifold=self.manifold
+        )
+
+    def forward(self, inputs_tangent):
+        """
+        inputs_tangent: [B, L, D]  tangent vectors at origin (encoder output)
+        Returns: vq_loss (scalar), z_q (on ball, [B, L, D]), indices ([B, L])
+        """
+        B, L, D = inputs_tangent.shape
+        scale   = 1.0 / math.sqrt(D)
+
+        # Map encoder output to ball
+        z_ball = self.manifold.expmap0(inputs_tangent * scale)   # [B, L, D]
+        z_flat = z_ball.reshape(-1, D)                           # [B*L, D]
+
+        # Pairwise geodesic distances to all codebook vectors
+        # manifold.dist expects broadcastable shapes
+        dists = self.manifold.dist(
+            z_flat.unsqueeze(1),           # [B*L, 1,  D]
+            self.embedding.unsqueeze(0)    # [1,   K,  D]
+        ) ** 2                             # [B*L, K]
+
+        indices = torch.argmin(dists, dim=1).reshape(B, L)       # [B, L]
+        z_q     = self.embedding[indices]                        # [B, L, D] on ball
+
+        # Commitment loss in geodesic distance
+        vq_loss = (
+            self.manifold.dist(z_q,                z_ball.detach()) ** 2
+        ).mean() + self.commitment_cost * (
+            self.manifold.dist(z_q.detach(),       z_ball) ** 2
+        ).mean()
+
+        # Straight-through: forward = z_q, gradient sees z_ball
+        z_q_st = z_ball + (z_q - z_ball).detach()
+        return vq_loss, z_q_st, indices
 
 
 class HierarchicalVQVAE(nn.Module):
     def __init__(self, vocab_size=13, hidden_dim=64, N=64,
                  bot_codebook=64, top_codebook=16,
-                 bot_dim=32, top_dim=32, cond_dim=16):
+                 bot_dim=32, top_dim=32, cond_dim=16,
+                 hyperbolic_top=False, top_curvature=1.0):
         super().__init__()
         self.vocab_size  = vocab_size
         self.hidden_dim  = hidden_dim
@@ -72,7 +133,12 @@ class HierarchicalVQVAE(nn.Module):
         self.enc_stride2_top = nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, stride=2, padding=1)
         self.enc_res_top     = ResidualBlock(hidden_dim)
         self.enc_proj_top    = nn.Conv1d(hidden_dim, top_dim, kernel_size=1)
-        self.top_quantizer   = VectorQuantizer(top_codebook, top_dim)
+        self.hyperbolic_top  = hyperbolic_top
+        if hyperbolic_top:
+            self.top_quantizer = HyperbolicVectorQuantizer(top_codebook, top_dim,
+                                                           curvature=top_curvature)
+        else:
+            self.top_quantizer = VectorQuantizer(top_codebook, top_dim)
 
         # ── decoder ───────────────────────────────────────────────────────
         # top upsample: N/4 → N/2
@@ -124,8 +190,12 @@ class HierarchicalVQVAE(nn.Module):
     def decode(self, z_q_bot, z_q_top, p):
         """
         z_q_bot : [B, L_bot, bot_dim]
-        z_q_top : [B, L_top, top_dim]
+        z_q_top : [B, L_top, top_dim]  — on Poincaré ball if hyperbolic_top, else Euclidean
         """
+        # if top codes live on the manifold, map back to tangent space before ConvTranspose
+        if self.hyperbolic_top:
+            z_q_top = self.top_quantizer.manifold.logmap0(z_q_top)
+
         # upsample top → N/2
         top_ctx = F.relu(self.dec_top_up(z_q_top.transpose(1, 2)))  # [B, H, N/2]
 

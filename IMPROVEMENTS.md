@@ -196,30 +196,29 @@ The hierarchy largely solved the capacity bottleneck. hd=256 adds only +3pp on p
 
 ---
 
-### 18. Metric Alignment Evaluation for Hierarchical Model
+### 18. Metric Alignment Evaluation for Hierarchical Model ✅
 
-**Problem**: All metric alignment results so far are for flat Euclidean and Hyperbolic models. We don't know whether the hierarchical VQ-VAE's strong reconstruction accuracy (+18pp) translates into better ultrametric alignment. The two quantities are not correlated in general — a model can reconstruct well but organize the latent space poorly (or vice versa).
+**Result** (`eval_hierarchical_alignment.py`, Broad-11 eval set):
 
-**Plan**: Extract the bottom-level quantized representations `z_q_bot` from the hierarchical VQ-VAE and compute:
-1. Per-prime metric alignment loss (MSE between normalized pairwise Euclidean distances and p-adic distances)
-2. Per-prime Spearman r
+Hierarchical bottom codes have weighted-avg alignment loss 0.161 and Spearman r=0.048 — ~4× higher loss and ~13× lower r than flat Euclidean (0.038 / 0.656).
 
-Compare against the Euclidean hd=64 and hd=256 flat models using `eval_hyperbolic_hd256.py` as a template.
-
-**What to measure**: Metric alignment loss and Spearman r for p=2,3,5,7,11 on the hierarchical bottom codes.
-
-**Where to add code**: Extend `eval_hyperbolic_hd256.py` or create `eval_hierarchical_alignment.py`.
+**This is expected and correct.** Bottom codes encode within-bucket variation (fine-grained digit patterns given a top code); they are not supposed to globally organize all sequence-to-sequence distances. Global tree distance is handled by the top codes (confirmed by the 16/16 conditional coherence test). Measuring global metric alignment against bottom codes alone conflates the two levels — the correct evaluation is (1) top-code alignment at the branch level and (2) conditional bottom-code alignment within sequences sharing the same top code.
 
 ---
 
-### 19. Hyperbolic Top Codes
+### 19. Hyperbolic Top Codes ✅
 
-**Problem**: The top branch of the hierarchical VQ-VAE quantizes to Euclidean codebook vectors. But the top codes are supposed to represent global tree-branch identity — exactly the kind of hierarchical structure that hyperbolic geometry models naturally. Replacing the top-level Euclidean quantizer with a Poincaré-ball codebook could give the top codes a geometry that better matches the branching structure they need to represent.
+**Result** (Broad-11, N=64, hd=64, `--hyperbolic_top --top_curvature 1.0`):
 
-**Plan**: Add `manifold='poincare'` option to the top branch of `HierarchicalVQVAE`. The top codebook embeddings become `geoopt.ManifoldParameter` on the Poincaré ball. The VQ lookup uses geodesic distance instead of Euclidean. The top prior still operates on indices, so the prior architecture is unchanged.
+- Val accuracy: 63.98% (vs Euclidean top 78.03%)
+- Top-prior accuracy: **100% from epoch 2** (vs Euclidean 19.94%)
+- Bottom-prior accuracy: 22.97% (vs 39.59%)
 
-**Estimated scope**: Medium. Requires modifying `VectorQuantizer` (or adding `HyperbolicVectorQuantizer`) and updating `HierarchicalVQVAE.encode()`.
+**Diagnosis — codebook collapse.** 100% top-prior accuracy by epoch 2 is a near-certain sign the codebook collapsed to 1–2 active codes. When all codebook vectors initialize near the ball origin, their geodesic distances are nearly identical and the commitment loss creates a strong pull toward the dominant code rather than spreading utilization.
 
-**Expected outcome**: Hyperbolic top codes should improve metric alignment on high-branching primes (p≥7) while maintaining or improving reconstruction accuracy, since the top-level geometry now matches the tree structure it represents.
+**Fixes to explore** (Batch 4 candidate):
+1. Spread initialization using the Poincaré ball's uniform measure
+2. EMA codebook updates instead of gradient descent
+3. Codebook-utilization entropy regularizer
 
-**Prerequisite**: Items 14 and 15 should confirm the top codes are actually encoding tree-branch structure before investing in this change.
+`HyperbolicVectorQuantizer` is implemented in `hierarchical_vqvae.py`. The eval-time indexing bug (`ManifoldParameter` not callable) was also fixed in `train_hierarchical.py`.

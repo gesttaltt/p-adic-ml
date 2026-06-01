@@ -207,9 +207,11 @@ def evaluate_per_prime(vqvae, top_prior, bot_prior, primes, N, device, n_samples
         idx_top_s = top_prior.sample(p_t, L=L_top, temperature=0.8)
         idx_bot_s = bot_prior.sample(idx_top_s, p_t, temperature=0.8)
 
-        # decode
-        z_q_top = vqvae.top_quantizer.embedding(idx_top_s)
-        z_q_bot = vqvae.bot_quantizer.embedding(idx_bot_s)
+        # decode — use indexing for ManifoldParameter (hyperbolic) or nn.Embedding (euclidean)
+        top_emb = vqvae.top_quantizer.embedding
+        bot_emb = vqvae.bot_quantizer.embedding
+        z_q_top = top_emb[idx_top_s] if not callable(top_emb) else top_emb(idx_top_s)
+        z_q_bot = bot_emb[idx_bot_s] if not callable(bot_emb) else bot_emb(idx_bot_s)
         logits  = vqvae.decode(z_q_bot, z_q_top, p_t)
         samples = torch.argmax(logits, dim=-1).cpu().numpy()
 
@@ -231,11 +233,14 @@ def main():
     parser.add_argument('--bot_epochs',       type=int, default=12)
     parser.add_argument('--lr',               type=float, default=1e-3)
     parser.add_argument('--hidden_dim',       type=int, default=64)
-    parser.add_argument('--bot_codebook',     type=int, default=64)
-    parser.add_argument('--top_codebook',     type=int, default=16)
-    parser.add_argument('--bot_dim',          type=int, default=32)
-    parser.add_argument('--top_dim',          type=int, default=32)
-    parser.add_argument('--save_dir',         type=str, default='./checkpoints/hierarchical')
+    parser.add_argument('--bot_codebook',     type=int,  default=64)
+    parser.add_argument('--top_codebook',     type=int,  default=16)
+    parser.add_argument('--bot_dim',          type=int,  default=32)
+    parser.add_argument('--top_dim',          type=int,  default=32)
+    parser.add_argument('--hyperbolic_top',   action='store_true',
+                        help='Use Poincaré-ball top codebook instead of Euclidean')
+    parser.add_argument('--top_curvature',    type=float, default=1.0)
+    parser.add_argument('--save_dir',         type=str,  default='./checkpoints/hierarchical')
     args = parser.parse_args()
 
     device    = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -259,14 +264,21 @@ def main():
     full_loader  = DataLoader(dataset,  batch_size=args.batch_size, shuffle=False)
 
     # ── Stage 1 ───────────────────────────────────────────────────────────
+    if args.hyperbolic_top:
+        print(f'Top codebook: Poincaré ball (c={args.top_curvature})')
+    else:
+        print(f'Top codebook: Euclidean')
+
     vqvae = HierarchicalVQVAE(
-        vocab_size   = vocab,
-        hidden_dim   = args.hidden_dim,
-        N            = args.N,
-        bot_codebook = args.bot_codebook,
-        top_codebook = args.top_codebook,
-        bot_dim      = args.bot_dim,
-        top_dim      = args.top_dim,
+        vocab_size      = vocab,
+        hidden_dim      = args.hidden_dim,
+        N               = args.N,
+        bot_codebook    = args.bot_codebook,
+        top_codebook    = args.top_codebook,
+        bot_dim         = args.bot_dim,
+        top_dim         = args.top_dim,
+        hyperbolic_top  = args.hyperbolic_top,
+        top_curvature   = args.top_curvature,
     )
     n_params = sum(p.numel() for p in vqvae.parameters())
     print(f'Parameters: {n_params:,}')

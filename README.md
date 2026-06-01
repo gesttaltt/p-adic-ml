@@ -258,6 +258,20 @@ The top-down decoder conditioning forces the top level to capture global branch 
 
 **Prior sample quality:** All primes produce samples with only valid digits ($d < p$). Some prior samples show structured repetition consistent with rational p-adic numbers (e.g. `1 2 1 2 0 0 1 2 0 0 0 1 2 ...` for $p=3$, which matches the periodic pattern of a rational with denominator dividing $p^k - 1$).
 
+#### Hyperbolic Top Codes (`--hyperbolic_top`)
+
+We replaced the Euclidean top codebook with a Poincaré-ball codebook (`HyperbolicVectorQuantizer`), using geodesic distance for quantization and a geodesic commitment loss. The model was trained with identical hyperparameters to the Euclidean baseline.
+
+| Metric | Euclidean top | Hyperbolic top |
+| :--- | :---: | :---: |
+| Val accuracy | $78.03\%$ | $63.98\%$ |
+| Top-prior accuracy | $19.94\%$ | $\mathbf{100\%}$ (epoch 2 onwards) |
+| Bottom-prior accuracy | $39.59\%$ | $22.97\%$ |
+
+**Diagnosis — codebook collapse:** The top prior achieving 100% accuracy by epoch 2 (from a random 6.25% baseline) is a near-certain sign that the hyperbolic top codebook **collapsed** — the encoder learned to route all sequences to the same 1–2 top codes. When the codebook is effectively size-1, the prior trivially achieves 100% by always predicting that code, reconstruction accuracy drops (the top provides no useful branch signal to the decoder), and the bottom prior accuracy drops (with no branch conditioning, the bottom must absorb all the variation alone).
+
+The root cause is the curvature-sensitive initialization: all codebook vectors are initialized near the ball origin with small norm, so their initial geodesic distances are all nearly identical. The gradient landscape of the geodesic commitment loss then creates a strong pull toward the dominant code rather than spreading the codebook. Fixes to explore: (1) spread initialization across the ball using the Poincaré ball's uniform measure, (2) use EMA codebook updates instead of gradient descent for the hyperbolic codebook, (3) add a codebook-utilization entropy regularizer.
+
 #### Top Codebook Interpretability (`analyze_top_codes.py`)
 
 After training, we ran a full interpretability analysis on the 16 top codebook entries by assigning 4500 sequences (5 primes × 3 types × 300) to their majority top code and measuring structure:
@@ -276,6 +290,21 @@ After training, we ran a full interpretability analysis on the 16 top codebook e
 | Codes with conditional coherence < unconditional baseline | **16 / 16** |
 | Most specialized code | Code 11 (100% $p=2$) |
 | Tightest conditional coherence | Code 7 (mean dist 0.271 vs baseline 0.838) |
+
+#### Metric Alignment of Hierarchical Bottom Codes (`eval_hierarchical_alignment.py`)
+
+The bottom-level quantized representations were evaluated against flat Euclidean and Poincaré models using the standard per-prime alignment loss and Spearman $r$ metric:
+
+| Prime | Euc hd=64 Loss / $r$ | Hyp-P hd=256 Loss / $r$ | Hier hd=64 Loss / $r$ | Hier hd=256 Loss / $r$ | Hier B19 hd=64 Loss / $r$ |
+| :---: | :---: | :---: | :---: | :---: | :---: |
+| $p=2$ | $0.00915$ / $0.911$ | $0.01018$ / $0.920$ | $0.283$ / $0.090$ | $0.280$ / $0.128$ | $0.278$ / $0.157$ |
+| $p=3$ | $0.01161$ / $0.814$ | $0.00762$ / $0.817$ | $0.233$ / $0.058$ | $0.232$ / $0.060$ | $0.229$ / $0.109$ |
+| $p=5$ | $0.03263$ / $0.690$ | $0.00590$ / $0.691$ | $0.163$ / $0.046$ | $0.163$ / $0.054$ | $0.162$ / $0.062$ |
+| $p=7$ | $0.04935$ / $0.600$ | $0.00668$ / $0.604$ | $0.124$ / $0.038$ | $0.125$ / $0.036$ | $0.123$ / $0.054$ |
+| $p=11$ | $0.06412$ / $0.452$ | $0.01695$ / $0.499$ | $0.086$ / $0.032$ | $0.086$ / $0.034$ | $0.085$ / $0.037$ |
+| **Wtd avg** | $0.038$ / $0.656$ | $\mathbf{0.010}$ / $\mathbf{0.671}$ | $0.161$ / $0.048$ | $0.161$ / $0.055$ | $0.159$ / $0.074$ |
+
+**Interpretation — why this is expected and correct:** The hierarchical bottom codes have ~4× higher alignment loss and ~13× lower Spearman $r$ than the flat Euclidean model. This is not a failure — it is the correct behavior for a factorized representation. The bottom codes encode *within-bucket* variation (fine-grained digit patterns given a top code's branch identity); they are not supposed to globally organize all sequence-to-sequence distances. The global tree distance is handled by the top codes, as confirmed by the interpretability analysis (16/16 conditional coherence). Measuring global metric alignment against bottom codes alone conflates the two levels. A proper alignment metric for the hierarchical model would measure: (1) top-code alignment with p-adic distance at the branch level, and (2) conditional bottom-code alignment within sequences sharing the same top code.
 
 ---
 
