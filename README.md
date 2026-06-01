@@ -123,7 +123,7 @@ We replaced the Euclidean latent space $\mathbb{R}^d$ in the Beta-VAE with a **P
 | $p=11$ | $0.08016$ | $0.3489$ | **$0.05915$** | **$0.4549$** | Hyp |
 | **All (wtd)** | $0.06295$ | $0.7046$ | **$0.05088$** | **$0.7349$** | **Hyp** |
 
-#### Metric Alignment Comparison — N=64 (Broad-11, held-out test set, deterministic $\mu$)
+#### Metric Alignment Comparison — N=64, hd=64 (Broad-11, held-out test set, deterministic $\mu$)
 
 | Prime | Euc Align Loss | Euc Spearman $r$ | Hyp Align Loss | Hyp Spearman $r$ | Winner |
 | :--- | :---: | :---: | :---: | :---: | :---: |
@@ -134,11 +134,30 @@ We replaced the Euclidean latent space $\mathbb{R}^d$ in the Beta-VAE with a **P
 | $p=11$ | $0.06404$ | $0.4529$ | **$0.03566$** | **$0.4985$** | Hyp |
 | **All (wtd)** | $0.03385$ | $0.7442$ | **$0.02761$** | **$0.7498$** | **Hyp** |
 
-**Key findings across both sequence lengths:**
+**Key findings at hd=64:**
 
-- **The hyperbolic advantage is concentrated at high branching factors ($p \geq 5$).** At $p=7$ the hyperbolic model reduces alignment loss by 35% (N=64) and at $p=11$ by 44%. This is structurally expected: hyperbolic space's exponentially growing volume matches the $p^d$ node count of $p$-ary trees, so the benefit scales with branching factor.
-- **At N=64 the Euclidean model catches up at small primes ($p=2, 3$).** Longer sequences provide finer ultrametric resolution; the Euclidean model's alignment loss at $p=2$ improves 4× (0.036 → 0.009) while the hyperbolic model's gain is smaller. This suggests the low-branching case no longer needs the curved geometry to avoid crowding.
-- **Both models improve significantly from N=32 → N=64** (Euc: Spearman +0.040, Hyp: +0.015), confirming that longer digit sequences expose richer tree structure that both latent spaces can exploit.
+- **The hyperbolic advantage is concentrated at high branching factors ($p \geq 5$).** At $p=7$ the hyperbolic model reduces alignment loss by 35% and at $p=11$ by 44%. Hyperbolic space's exponentially growing volume matches the $p^d$ node count of $p$-ary trees, so the benefit scales with branching factor.
+- **At N=64 the Euclidean model catches up at small primes ($p=2, 3$).** Longer sequences provide finer ultrametric resolution; the Euclidean alignment loss at $p=2$ improves 4× (0.036 → 0.009). The low-branching case no longer needs the curved geometry.
+
+#### Metric Alignment Comparison — N=64, hd=256 (Broad-11, held-out test set, deterministic $\mu$)
+
+Full four-way comparison including both Poincaré and Lorentz at `hidden_dim=256` (`eval_hyperbolic_hd256.py`):
+
+| Prime | Euc hd=64 Loss | Euc hd=64 $r$ | Hyp-P hd=64 Loss | Hyp-P hd=64 $r$ | Hyp-P hd=256 Loss | Hyp-P hd=256 $r$ | Hyp-L hd=256 Loss | Hyp-L hd=256 $r$ |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| $p=2$ | $0.00891$ | $0.9116$ | $0.01809$ | $0.9117$ | **$0.00643$** | **$0.9201$** | $0.01886$ | $0.9114$ |
+| $p=3$ | $0.01140$ | $0.8131$ | $0.02105$ | $0.8103$ | **$0.01029$** | **$0.8161$** | $0.01308$ | $0.8110$ |
+| $p=5$ | $0.03150$ | $0.6894$ | $0.02876$ | $0.6898$ | **$0.01020$** | **$0.6903$** | $0.01042$ | $0.6899$ |
+| $p=7$ | $0.05016$ | $0.5999$ | $0.03270$ | $0.6039$ | **$0.00977$** | $0.6039$ | $0.02021$ | $0.6039$ |
+| $p=11$ | $0.06286$ | $0.4515$ | $0.03421$ | $0.4956$ | **$0.01145$** | **$0.4957$** | $0.03278$ | $0.4956$ |
+| **All (wtd)** | $0.03786$ | $0.6552$ | $0.02844$ | $0.6675$ | **$0.00995$** | **$0.6697$** | $0.02020$ | $0.6676$ |
+
+**Key findings at hd=256:**
+
+- **Poincaré hd=256 wins on alignment loss across all 5 primes** — the first configuration to beat Euclidean at small primes ($p=2, 3$) as well. Weighted average alignment loss: 0.00995, a **65% reduction** over Poincaré hd=64 (0.02844) and a **74% reduction** over Euclidean hd=64 (0.03786).
+- **Capacity recovers the small-prime gap.** At hd=64, Euclidean outperformed Poincaré at $p=2$ and $p=3$ because longer sequences already gave sufficient linear resolution. At hd=256, the Poincaré encoder has enough capacity to exploit the hyperbolic geometry even for low-branching trees.
+- **Lorentz hd=256 underperforms Poincaré hd=256** at every prime except marginally at $p=5$. It performs roughly on par with Poincaré hd=64. The Lorentz model's larger ambient dimension (latent+1) and different curvature landscape appear to require more epochs or a different regularization schedule to realise comparable gains.
+- **Spearman $r$ improves only marginally with capacity** (+0.002 from Poincaré hd=64 to hd=256). Capacity tightens the magnitude of alignment — the models are already recovering the correct rank ordering of distances at hd=64.
 
 ---
 

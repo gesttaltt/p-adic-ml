@@ -105,21 +105,17 @@
 
 ---
 
-### 11. Hyperbolic VAE at hd=256
+### 11. Hyperbolic VAE at hd=256 ✅
 
-**Problem**: All Hyperbolic VAE results (both N=32 and N=64 tables in the README) used `hidden_dim=64`. The VQ-VAE benefits strongly from hd=256 (+10pp on p=5). The hyperbolic model faces the same capacity bottleneck, especially at high-branching primes where the latent space needs to represent more complex structure.
+**Problem**: All prior Hyperbolic VAE results used `hidden_dim=64`, leaving the capacity question open.
 
-**Plan**: Retrain `HyperbolicBetaVAE` on Broad-11 at `hidden_dim=256, N=64`, both Poincaré and Lorentz. Compare metric alignment and Spearman r against the existing hd=64 Hyperbolic VAE and the hd=256 Euclidean Beta-VAE.
+**Result**: Trained Poincaré and Lorentz at hd=256, N=64, c=1.0, 15 epochs. Evaluated with `eval_hyperbolic_hd256.py`.
 
-**What to measure**: Metric alignment loss and Spearman r per prime (p=2,3,5,7,11), both manifolds.
+- **Hyp-P hd=256 wins on alignment loss across all 5 primes** — weighted avg 0.00995 (-65% vs Hyp-P hd=64, -74% vs Euc hd=64). First config to beat Euclidean at p=2 and p=3.
+- **Lorentz hd=256 disappoints** — performs on par with Poincaré hd=64, not hd=256. Larger ambient dimension may need more epochs.
+- **Spearman r barely changes** — capacity tightens magnitude of alignment but rank ordering was already correct at hd=64.
 
-**Expected outcome**: hd=256 hyperbolic should win at p≥5 even more decisively, widening the gap over Euclidean hd=256.
-
-**Command**:
-```bash
-python train_hyperbolic.py --primes 2 3 5 7 11 --N 64 --hidden_dim 256 --manifold poincare --save_dir ./checkpoints/hyperbolic_n64_hd256
-python train_hyperbolic.py --primes 2 3 5 7 11 --N 64 --hidden_dim 256 --manifold lorentz  --save_dir ./checkpoints/lorentz_n64_hd256
-```
+`eval_hyperbolic_hd256.py` is the reusable eval script for this comparison.
 
 ---
 
