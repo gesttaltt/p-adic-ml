@@ -222,3 +222,96 @@ Hierarchical bottom codes have weighted-avg alignment loss 0.161 and Spearman r=
 3. Codebook-utilization entropy regularizer
 
 `HyperbolicVectorQuantizer` is implemented in `hierarchical_vqvae.py`. The eval-time indexing bug (`ManifoldParameter` not callable) was also fixed in `train_hierarchical.py`.
+
+---
+
+## Batch 4 — Planned
+
+### 20. Conditional Metric Alignment
+
+**Problem**: Item 18 showed that measuring global metric alignment against hierarchical bottom codes gives misleading results (Spearman r≈0.05). The correct test is *conditional* alignment: within sequences assigned to the same top code, does bottom-code Euclidean distance correlate with p-adic distance? This would confirm that the bottom level genuinely refines the tree structure within each branch, not just memorises tokens.
+
+**Plan**: For each top code $k$, collect all sequences assigned to it, encode to get $z_q^{bot}$, and compute Spearman $r$ between pairwise Euclidean bottom-code distance and pairwise p-adic distance. Report mean conditional $r$ across all 16 codes, weighted by code population. Compare to the unconditional $r$ (0.048) and to the flat Euclidean model (0.656).
+
+**Expected outcome**: Conditional $r$ should be substantially higher than the unconditional 0.048 if the bottom codes are organising within-bucket p-adic distances. If conditional $r$ ≈ 0, the bottom codes are not doing metric alignment even locally, and we should add a within-bucket metric loss to the training objective.
+
+**Where to add code**: Extend `analyze_top_codes.py` with a `conditional_metric_alignment()` function. No training required.
+
+---
+
+### 21. Hyperbolic Top Codebook Collapse Fix
+
+**Problem**: Item 19's hyperbolic top codebook collapsed to 1–2 active codes. The root cause is near-origin initialization giving nearly-identical geodesic distances. Three concrete fixes identified.
+
+**Plan**: Implement all three fixes in `HyperbolicVectorQuantizer` and train with `--hyperbolic_top`:
+
+1. **Spread initialization**: sample codebook vectors from the uniform distribution on the Poincaré ball (or at fixed radius $r = 0.5$) instead of near-origin random init. This ensures non-trivial initial geodesic separation.
+
+2. **EMA codebook updates**: replace gradient-based commitment loss with exponential moving average updates (same as VQ-VAE-2 EMA). The EMA target for each code is the mean of encoder outputs assigned to it, mapped back to the ball. EMA sidesteps gradient pathologies in hyperbolic space.
+
+3. **Entropy regularizer**: add $-\lambda \sum_k p_k \log p_k$ to the loss, where $p_k$ is the average usage fraction of code $k$. This penalises codebook under-utilisation and is directly differentiable through the soft usage fractions.
+
+**What to measure**: Number of active codes (codebook utilisation), top-prior accuracy, val reconstruction accuracy. Success = top-prior accuracy below 60%, ≥8 active codes, val accuracy ≥ Euclidean top baseline (78%).
+
+**Estimated scope**: Medium. Changes are contained to `HyperbolicVectorQuantizer` in `hierarchical_vqvae.py`.
+
+---
+
+### 22. Hierarchical VQ-VAE on Broad-23
+
+**Problem**: The flat VQ-VAE on Broad-23 shows a persistent accuracy dip even at hd=256. We showed in item 17 that hierarchical Broad-19 hd=64 beats flat Broad-19 hd=256 by +9.6pp. Does the same synergy hold at Broad-23, overcoming the plateau that capacity scaling could not?
+
+**Plan**: Train `HierarchicalVQVAE` on Broad-23 (9 primes, primes up to 23), evaluate on p=2 and p=5.
+
+**What to measure**: VQ-VAE p=5 accuracy vs flat Broad-23 hd=256 (64.32%). If hierarchical Broad-23 exceeds Broad-19 hierarchical (82.72%), the hierarchy completely overcomes the Broad-23 plateau.
+
+**Expected outcome**: The hierarchy should close most or all of the Broad-23 dip. Each of the two codebook levels only needs to model a subset of the entropy from 9 primes, reducing inter-prime competition more effectively than raw capacity scaling.
+
+**Command**:
+```bash
+python train_hierarchical.py --primes 2 3 5 7 11 13 17 19 23 --N 64 \
+  --save_dir ./checkpoints/hierarchical_broad23
+```
+
+---
+
+### 23. Hierarchical Cascade Router
+
+**Problem**: The cascade router in `anomaly_detector.py` uses the flat VQ-VAE as the slow-path fallback. The hierarchical VQ-VAE has +18pp better reconstruction accuracy on the same Broad-11 task. Better reconstruction should shift the threshold calibration, improving the cascade's precision-recall trade-off at equal speed.
+
+**Plan**: Update `evaluate_cascade.py` to accept a `--model_type hierarchical` flag that instantiates `HierarchicalVQVAE` instead of `ConditionalVQVAE`. Evaluate the cascade trade-off curve (reconstruction quality vs generation speed) for both flat and hierarchical slow-path models.
+
+**What to measure**: Reconstruction accuracy at the threshold where 50% of samples take the fast path, and the threshold value itself. A lower threshold at the same accuracy = the hierarchical slow path is higher quality so the gating can be tighter.
+
+**Estimated scope**: Small. Mostly wiring `HierarchicalVQVAE` into the existing cascade evaluation harness.
+
+---
+
+### 24. Hyperbolic Beta-VAE at Optimal Curvature ($c=5.0$)
+
+**Problem**: All Hyperbolic Beta-VAE experiments (items 3, 11) used $c=1.0$. The converged curvature sweep (item 10) found $c=5.0$ gives the best metric alignment on Poincaré — reducing weighted-avg alignment loss from 0.115 ($c=1.0$) to 0.015 ($c=5.0$), an 87% improvement. The hd=256 Poincaré results (item 11) also used $c=1.0$. Re-running at $c=5.0$ hd=256 would give the best possible metric alignment result.
+
+**Plan**: Retrain `HyperbolicBetaVAE` on Broad-11, N=64, hd=256, with $c=5.0$ fixed. Compare per-prime alignment loss and Spearman $r$ against the $c=1.0$ hd=256 results.
+
+**What to measure**: Per-prime alignment loss and Spearman r for p=2,3,5,7,11.
+
+**Expected outcome**: Large alignment improvement at p≥5, potentially surpassing the Euclidean model at p=2,3 as well (since $c=5.0$ also improves small-prime alignment in the sweep).
+
+**Command**:
+```bash
+python train_hyperbolic.py --primes 2 3 5 7 11 --N 64 --hidden_dim 256 \
+  --curvature 5.0 --manifold poincare \
+  --save_dir ./checkpoints/hyperbolic_n64_hd256_c5
+```
+
+---
+
+### 25. Three-Level Hierarchy for N=128
+
+**Problem**: The current two-level hierarchy (bottom: N/2, top: N/4) was designed for N=64. For longer sequences (N=128), three levels could capture structure at three scales: coarse global branch (N/8), medium branch (N/4), and fine local (N/2). N=128 exposes richer tree structure — the N=32→64 jump improved Spearman r by +0.040 for Euclidean models.
+
+**Plan**: Extend `HierarchicalVQVAE` to support an optional third codebook level (N/8 = 16 tokens for N=128). Add `mid_codebook` and `mid_dim` parameters. Add a `MidPriorGRU` conditioned on the top, and update `BotPriorGRU` to condition on both mid and top codes. Train on Broad-11 at N=128.
+
+**Estimated scope**: Large. Three-level architecture requires careful design of the top-down conditioning chain (top → mid → bot) and three prior training stages.
+
+**Prerequisite**: Run item 22 (Broad-23 hierarchical) first to confirm the hierarchy is robust before investing in the more complex three-level design.
