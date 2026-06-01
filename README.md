@@ -12,6 +12,7 @@ Traditional machine learning architectures map hierarchical data into flat Eucli
 5. Validates that a **Poincaré-ball latent space** achieves better ultrametric alignment than Euclidean space across all tested primes, with the advantage growing with branching factor.
 6. Demonstrates that a **Lorentz (hyperboloid) manifold** is a viable alternative latent space, offering improved numerical stability.
 7. Provides **learnable curvature** as a training-time optimization target via `RiemannianAdam`.
+8. Shows that a **two-level hierarchical VQ-VAE** (VQ-VAE-2 style) improves reconstruction accuracy by +18pp over the flat VQ-VAE on the same task with fewer parameters.
 
 ---
 
@@ -220,6 +221,42 @@ This allows the model to discover whether sharper hierarchy separation (large $c
 
 ---
 
+### 7. Hierarchical VQ-VAE
+
+We replaced the single-codebook VQ-VAE with a **two-level hierarchy** inspired by VQ-VAE-2, explicitly matching the multi-scale structure of $p$-adic trees.
+
+**Architecture:**
+- Shared encoder: digits → embed → Conv1d stride-2 → ResBlock → `[B, H, N/2]` feature map
+- **Bottom branch**: ResBlock → Conv1d(1) → `[B, N/2, 32]` → VQ (codebook 64) → `idx_bot`
+- **Top branch**: Conv1d stride-2 → ResBlock → Conv1d(1) → `[B, N/4, 32]` → VQ (codebook 16) → `idx_top`
+- **Decoder (top-down)**: upsample top (`N/4→N/2`) → add to bottom → ResBlock → upsample (`N/2→N`) → digit logits
+
+The top-down decoder conditioning forces the top level to capture global branch identity (which major tree branch the sequence belongs to) while the bottom level refines local digit patterns within that branch — mirroring the hierarchical structure of p-adic expansions.
+
+**Three-stage training (`train_hierarchical.py`):**
+1. Joint VQ-VAE training (encoder + both quantizers + decoder)
+2. `TopPriorGRU` — autoregressive over $N/4 = 16$ top-codebook indices (codebook 16)
+3. `BotPriorGRU` — autoregressive over $N/2 = 32$ bottom-codebook indices (codebook 64), conditioned on top indices via repeat-interleave upsampling at each GRU step
+
+**Results (Broad-11, $N=64$, hd=64, 141K params total):**
+
+| Metric | Flat VQ-VAE | Hierarchical VQ-VAE | Gain |
+| :--- | :---: | :---: | :---: |
+| Val Accuracy (all primes) | $\sim 60\%$ | $\mathbf{78.03\%}$ | +18pp |
+| Recon accuracy $p=2$ | — | $98.40\%$ | — |
+| Recon accuracy $p=3$ | — | $96.81\%$ | — |
+| Recon accuracy $p=5$ | — | $79.35\%$ | — |
+| Recon accuracy $p=7$ | — | $63.19\%$ | — |
+| Recon accuracy $p=11$ | — | $47.18\%$ | — |
+| Top-prior accuracy | — | $19.94\%$ ($3.2\times$ random) | — |
+| Bottom-prior accuracy | — | $39.59\%$ ($25\times$ random) | — |
+
+The **+18pp accuracy improvement** over the flat VQ-VAE on the same task with fewer parameters is the most striking result. Two-level quantization lets each codebook model a subset of the total entropy: the top captures which of 16 global tree-branch patterns the sequence follows; the bottom refines the remaining detail. Neither level needs to compress the full signal alone.
+
+**Prior sample quality:** All five primes produce samples with only valid digits ($d < p$). Some prior samples show structured repetition consistent with rational p-adic numbers (e.g. `1 2 1 2 0 0 1 2 0 0 0 1 2 ...` for $p=3$, which matches the periodic pattern of a rational with denominator dividing $p^k - 1$).
+
+---
+
 ## Cross-Prime Latent Interpolation
 
 The `interpolate.py` script encodes a sequence from one prime base, encodes a second from another, and linearly interpolates the latent vector $z_1 \to z_2$, decoding each step with a chosen target prime. This reveals how the shared latent space represents the topological relationship between different $p$-ary trees.
@@ -411,7 +448,14 @@ python test_pipeline.py
 ```
 Covers: modular arithmetic, $p$-adic conversions, Hensel lifting, dataset generation, metric alignment (Euclidean + hyperbolic), VQ-VAE, Prior GRU, Euclidean Beta-VAE, and Hyperbolic VAE (Poincaré and Lorentz, fixed and learnable curvature).
 
-### 10. Generate Poincaré Disk Plots
+### 10. Train Hierarchical VQ-VAE
+Three-stage training (VQ-VAE → top prior → bottom prior):
+```bash
+python train_hierarchical.py --primes 2 3 5 7 11 --N 64
+```
+Checkpoints saved to `./checkpoints/hierarchical/` (`vqvae.pt`, `top_prior.pt`, `bot_prior.pt`).
+
+### 11. Generate Poincaré Disk Plots
 ```bash
 python scaling_analysis/poincare_embedding.py
 ```

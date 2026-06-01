@@ -133,17 +133,23 @@ Key findings:
 
 ---
 
-### 13. Hierarchical Prior
+### 13. Hierarchical VQ-VAE ✅
 
-**Problem**: The current prior is a flat GRU over VQ-VAE tokens, treating all sequence positions equally. p-adic trees have explicit hierarchical structure — the first digit determines the top-level branch, and each subsequent digit refines within that branch. A flat prior can't directly model this multi-scale structure.
+**Problem**: Flat GRU prior treats all positions equally; doesn't exploit the multi-scale tree structure of p-adic numbers.
 
-**Plan**: Implement a two-level VQ-VAE-2 style prior:
-- **Top codebook** (size 16): captures the high-level branch (first 3–4 digits)
-- **Bottom codebook** (size 64): captures local digit refinements, conditioned on the top code
-- Each level gets its own small GRU prior
+**Result**: Implemented `HierarchicalVQVAE` (VQ-VAE-2 style) + `TopPriorGRU` + `BotPriorGRU`.
 
-**What to measure**: VQ-VAE reconstruction accuracy, metric alignment, and — most importantly — the qualitative structure of prior-sampled sequences (do they look like coherent tree paths?).
+Architecture:
+- Shared encoder → bottom branch (N/2 tokens, codebook 64) + top branch (N/4 tokens, codebook 16)
+- Top-down decoder: upsample top as context, add to bottom, decode
+- TopPrior: autoregressive GRU over 16 top indices
+- BotPrior: autoregressive GRU over 32 bottom indices, conditioned on top via repeat-interleave injection
 
-**Estimated scope**: Large. Requires refactoring `models.py` (add `HierarchicalVQVAE`), `train.py` (two-pass training: bottom then top), and `anomaly_detector.py` (cascade router needs to handle hierarchical generation).
+Results (Broad-11, N=64, hd=64, 141K params total):
+- Val accuracy: **78.03%** (+18pp over flat VQ-VAE ~60%)
+- Per-prime: p=2 98.4%, p=3 96.8%, p=5 79.4%, p=7 63.2%, p=11 47.2%
+- Top-prior accuracy: 19.9% (3.2× random baseline 1/16)
+- Bottom-prior accuracy: 39.6% (25× random baseline 1/64)
+- Prior samples: all valid digits; some show structured repetition matching rational p-adic patterns
 
-**Prerequisite**: Complete items 9–11 first. The hierarchical prior should be benchmarked against the best Euclidean and hyperbolic models at matched capacity.
+Files: `hierarchical_vqvae.py`, `train_hierarchical.py`
