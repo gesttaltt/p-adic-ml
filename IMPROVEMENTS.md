@@ -262,15 +262,18 @@ Collapse resolved (+6.2pp over v1). Top-prior 39.12% is higher than Euclidean (1
 
 ---
 
-### 23. Hierarchical Cascade Router
+### 23. Hierarchical Cascade Router ✅
 
-**Problem**: The cascade router in `anomaly_detector.py` uses the flat VQ-VAE as the slow-path fallback. The hierarchical VQ-VAE has +18pp better reconstruction accuracy on the same Broad-11 task. Better reconstruction should shift the threshold calibration, improving the cascade's precision-recall trade-off at equal speed.
+**Result** (`evaluate_cascade_hierarchical.py`, 500 samples, primes [2,3,5,7,11]):
 
-**Plan**: Update `evaluate_cascade.py` to accept a `--model_type hierarchical` flag that instantiates `HierarchicalVQVAE` instead of `ConditionalVQVAE`. Evaluate the cascade trade-off curve (reconstruction quality vs generation speed) for both flat and hierarchical slow-path models.
+Flat slow path (Broad-19 hd=256): precision ceiling 77.5-78.0%
+Hierarchical slow path (Broad-11 hd=64): precision ceiling **93.9-94.1%**
 
-**What to measure**: Reconstruction accuracy at the threshold where 50% of samples take the fast path, and the threshold value itself. A lower threshold at the same accuracy = the hierarchical slow path is higher quality so the gating can be tighter.
+At 55% fast-path rate: flat 77.2% vs hierarchical **91.2%** (+14pp).
+At 82% fast-path rate: flat 76.4% vs hierarchical **84.1%** (+7.8pp).
+At 100% fast-path (Beta-VAE only): both converge to ~76% (Beta-VAE floor).
 
-**Estimated scope**: Small. Mostly wiring `HierarchicalVQVAE` into the existing cascade evaluation harness.
+The +18pp reconstruction advantage of the hierarchical model directly raises the cascade precision ceiling. The flat slow path cannot reach 90%+ precision at any threshold.
 
 ---
 
@@ -285,12 +288,13 @@ Per-prime: p=7 loss 0.00300 (3× better than c=1.0's 0.00977). c=5.0 wins on los
 
 ---
 
-### 25. Three-Level Hierarchy for N=128
+### 25. Three-Level Hierarchy for N=128 ✅
 
-**Problem**: The current two-level hierarchy (bottom: N/2, top: N/4) was designed for N=64. For longer sequences (N=128), three levels could capture structure at three scales: coarse global branch (N/8), medium branch (N/4), and fine local (N/2). N=128 exposes richer tree structure — the N=32→64 jump improved Spearman r by +0.040 for Euclidean models.
+**Result** (Broad-11, N=128, hd=64, 209K params):
+- Val acc: **79.29%** (+1.3pp vs 2-level N=64)
+- p=2: 99.93%, p=5: **82.02%** (+2.7pp vs 2-level), p=7: 68.83% (+5.6pp), p=11: 47.51%
+- Top prior: 19.25%, Mid prior: 33.47%, Bot prior: **45.78%** (29× random)
 
-**Plan**: Extend `HierarchicalVQVAE` to support an optional third codebook level (N/8 = 16 tokens for N=128). Add `mid_codebook` and `mid_dim` parameters. Add a `MidPriorGRU` conditioned on the top, and update `BotPriorGRU` to condition on both mid and top codes. Train on Broad-11 at N=128.
+Three levels: top N/8=16 tokens (codebook 16), mid N/4=32 (codebook 32), bot N/2=64 (codebook 64). Four-stage training: VQ-VAE → TopPrior → MidPrior|top → BotPrior|mid,top.
 
-**Estimated scope**: Large. Three-level architecture requires careful design of the top-down conditioning chain (top → mid → bot) and three prior training stages.
-
-**Prerequisite**: Run item 22 (Broad-23 hierarchical) first to confirm the hierarchy is robust before investing in the more complex three-level design.
+The bot prior's 45.78% accuracy (highest across all prior configs) shows better conditioning — receiving both mid and top context leaves it with lower conditional entropy. Files: `hierarchical_3level.py`, `train_hierarchical_3level.py`.

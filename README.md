@@ -419,6 +419,28 @@ Autoregressive prior sampling (VQ-VAE + Prior) is highly precise but slow due to
 
 This architecture establishes a Pareto-optimal frontier, allowing users to trade off generation velocity (samples/sec) for reconstruction precision by adjusting $\tau_p$.
 
+#### Hierarchical Slow Path (`evaluate_cascade_hierarchical.py`)
+
+Replacing the flat VQ-VAE slow path with the `HierarchicalVQVAE` dramatically raises the precision ceiling. Benchmark: Beta-VAE fast path (same in both), flat Broad-19 hd=256 slow path vs hierarchical Broad-11 hd=64 slow path. Precision measured as hierarchical VQ-VAE reconstruction accuracy.
+
+| $\tau$ | Flat fast% | Flat prec% | Hier fast% | **Hier prec%** |
+| :---: | :---: | :---: | :---: | :---: |
+| $0.00$ | $0\%$ | $77.5\%$ | $0\%$ | **$93.9\%$** |
+| $0.60$ | $20\%$ | $77.9\%$ | $20\%$ | **$93.9\%$** |
+| $0.80$ | $40\%$ | $77.3\%$ | $40\%$ | **$93.3\%$** |
+| $1.00$ | $55\%$ | $77.2\%$ | $55\%$ | **$91.2\%$** |
+| $1.50$ | $81\%$ | $76.4\%$ | $82\%$ | **$84.1\%$** |
+| $2.00$ | $100\%$ | $75.6\%$ | $100\%$ | $76.2\%$ |
+
+**Key findings:**
+
+- **At 0% fast-path rate (always use slow path), hierarchical precision is 93.9% vs flat's 77.5% (+16.4pp).** The flat slow path is capacity-limited; the hierarchical model's +18pp reconstruction advantage carries directly into the cascade.
+- **The hierarchical slow path holds above 90% precision until 55% of samples use the fast path.** The flat slow path cannot reach 90% precision at any threshold.
+- **At 100% fast path (only Beta-VAE), both converge to ~76%** — the precision floor is the Beta-VAE's own accuracy, equal for both configurations.
+- The hierarchical slow path is slightly slower per sample (~840 vs ~1100 smpl/s at τ=0) due to three-stage sampling (top → bottom prior), but the precision gain is substantial.
+
+![Cascade hierarchical plot](plots/cascade_hierarchical.png)
+
 ---
 
 ## Poincaré Disk Hyperbolic Embeddings
@@ -468,12 +490,39 @@ The Lorentz model and the Poincaré ball are isometric (same geometry, different
 
 ---
 
+## Three-Level Hierarchy at N=128
+
+`ThreeLevelVQVAE` (`hierarchical_3level.py`) adds a third codebook level to exploit the richer tree structure of longer sequences:
+
+- **Top** ($N/8 = 16$ tokens, codebook 16) — global branch
+- **Mid** ($N/4 = 32$ tokens, codebook 32) — intermediate branch  
+- **Bot** ($N/2 = 64$ tokens, codebook 64) — local digit patterns
+
+Four-stage training (`train_hierarchical_3level.py`): VQ-VAE → TopPriorGRU → ThreeLevelMidPriorGRU (conditioned on top) → ThreeLevelBotPriorGRU (conditioned on mid+top).
+
+**Results (Broad-11, $N=128$, hd=64, 209K params total):**
+
+| Metric | 2-Level N=64 | 3-Level N=128 |
+| :--- | :---: | :---: |
+| Val accuracy (all primes) | $78.03\%$ | $\mathbf{79.29\%}$ |
+| Recon $p=2$ | $98.40\%$ | $\mathbf{99.93\%}$ |
+| Recon $p=5$ | $79.35\%$ | $\mathbf{82.02\%}$ |
+| Recon $p=7$ | $63.19\%$ | $68.83\%$ |
+| Recon $p=11$ | $47.18\%$ | $47.51\%$ |
+| Top-prior accuracy | $19.94\%$ | $19.25\%$ |
+| Mid-prior accuracy | — | $33.47\%$ |
+| Bot-prior accuracy | $39.59\%$ | $\mathbf{45.78\%}$ ($29\times$ random) |
+| Parameters | $142\text{K}$ | $209\text{K}$ |
+
+The three-level model outperforms the two-level N=64 model on $p=5$ (+2.7pp) and $p=7$ (+5.6pp) with comparable parameters. The bottom prior accuracy (45.78%) is the highest across any prior configuration — the bot prior is well-conditioned because it receives both mid and top context, leaving it with lower conditional entropy.
+
+---
+
 ## Future Research Directions
 
-* **Curvature Sweep at Convergence**: The current sweep reports are 3-epoch snapshots. Running the full 15-epoch training across $c \in \{0.5, 1.0, 2.0, 5.0\}$ and learnable would reveal whether higher curvature offers a meaningful alignment advantage after convergence, particularly for high-branching primes.
-* **Hyperbolic VAE at hd=256**: The Hyperbolic VAE results used `hidden_dim=64`. Retraining at hd=256 (Broad-11, both Poincaré and Lorentz) would give a fair capacity-matched comparison against the Euclidean hd=256 models.
-* **Cross-Prime Interpolation Analysis**: Systematic analysis of interpolation paths between prime bases — digit-frequency histograms, p-adic distance distributions, and valid-digit fraction at each interpolation step — would characterise whether the shared latent space encodes a topologically meaningful cross-base structure.
-* **Hierarchical Prior**: The current prior is a flat GRU over VQ-VAE tokens. A hierarchical prior (two-level VQ-VAE-2 style, with a top code for branch and a bottom code for local refinement) could better capture the multi-scale structure of $p$-ary trees. Prerequisite: converged capacity experiments above.
+* **Within-bucket metric loss**: The conditional alignment analysis (item 20) showed bottom codes don't organise p-adic distances locally. Adding an explicit within-bucket metric alignment loss to the hierarchical training objective could combine the +18pp reconstruction advantage with meaningful ultrametric structure.
+* **Broader hierarchical models**: The three-level hierarchy was trained only on Broad-11. Training on Broad-23 at N=128 would test whether three levels further improve the multi-prime regularization synergy observed in the two-level experiments.
+* **Hyperbolic mid/top codebooks**: Item 21 showed the top codebook collapse can be fixed. Applying the fixed HyperbolicVectorQuantizer to the top or mid level of the three-level model could align those levels geometrically with the p-adic tree structure.
 
 ---
 
@@ -559,7 +608,21 @@ python train_hierarchical.py --primes 2 3 5 7 11 --N 64
 ```
 Checkpoints saved to `./checkpoints/hierarchical/` (`vqvae.pt`, `top_prior.pt`, `bot_prior.pt`).
 
-### 11. Generate Poincaré Disk Plots
+### 11. Hierarchical Cascade Router Evaluation
+Compare flat vs hierarchical slow-path precision and speed trade-off:
+```bash
+python evaluate_cascade_hierarchical.py
+```
+Output: `./plots/cascade_hierarchical.png` and `cascade_hierarchical.md`.
+
+### 12. Train Three-Level Hierarchical VQ-VAE (N=128)
+Four-stage training (VQ-VAE → top → mid → bot prior):
+```bash
+python train_hierarchical_3level.py --primes 2 3 5 7 11 --N 128
+```
+Checkpoints saved to `./checkpoints/hierarchical_3level/`.
+
+### 13. Generate Poincaré Disk Plots
 ```bash
 python scaling_analysis/poincare_embedding.py
 ```

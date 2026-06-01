@@ -41,8 +41,12 @@ THRESHOLDS    = [0.0, 0.1, 0.25, 0.4, 0.6, 0.8, 1.0, 1.5, 2.0, 3.0, 10.0]
 DEVICE        = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 BETA_VAE_CKPT    = './checkpoints/euclidean_n64/beta_vae_metric.pt'
-FLAT_VQVAE_CKPT  = './checkpoints/vqvae.pt'
-FLAT_PRIOR_CKPT  = './checkpoints/prior.pt'
+# Broad-19 hd=256 uses the new PrimeEmbedder; test only on p∈{2,3,5,7,11}
+# so all generated digits are valid (< p) for both models
+FLAT_VQVAE_CKPT  = './checkpoints/broad_p19_hd256/vqvae.pt'
+FLAT_PRIOR_CKPT  = './checkpoints/broad_p19_hd256/prior.pt'
+FLAT_VOCAB       = 19    # vocab_size used by broad_p19 checkpoints
+FLAT_HIDDEN_DIM  = 256
 HIER_DIR         = './checkpoints/hierarchical'
 
 
@@ -53,7 +57,7 @@ def load_models():
     beta_vae.load_state_dict(torch.load(BETA_VAE_CKPT, map_location=DEVICE))
     beta_vae.to(DEVICE).eval()
 
-    flat_vqvae = ConditionalVQVAE(vocab_size=VOCAB, hidden_dim=64,
+    flat_vqvae = ConditionalVQVAE(vocab_size=FLAT_VOCAB, hidden_dim=FLAT_HIDDEN_DIM,
                                    codebook_size=64, latent_dim=32, N=N)
     flat_vqvae.load_state_dict(torch.load(FLAT_VQVAE_CKPT, map_location=DEVICE))
     flat_vqvae.to(DEVICE).eval()
@@ -96,13 +100,18 @@ def flat_slow_path(vqvae, prior, p_tensor):
     return torch.argmax(vqvae.decode(q, p_tensor), dim=-1)
 
 
+def _lookup(quantizer, idx):
+    """Works for both nn.Embedding (callable) and ManifoldParameter (subscriptable)."""
+    emb = quantizer.embedding
+    return emb(idx) if callable(emb) else emb[idx]
+
 @torch.no_grad()
 def hier_slow_path(hier_vqvae, top_prior, bot_prior, p_tensor):
     L_top  = N // 4
     idx_t  = top_prior.sample(p_tensor, L=L_top, temperature=0.7)
     idx_b  = bot_prior.sample(idx_t, p_tensor, temperature=0.7)
-    z_top  = hier_vqvae.top_quantizer.embedding[idx_t]
-    z_bot  = hier_vqvae.bot_quantizer.embedding[idx_b]
+    z_top  = _lookup(hier_vqvae.top_quantizer, idx_t)
+    z_bot  = _lookup(hier_vqvae.bot_quantizer, idx_b)
     return torch.argmax(hier_vqvae.decode(z_bot, z_top, p_tensor), dim=-1)
 
 
