@@ -151,14 +151,14 @@ def main():
     prior_b17.load_state_dict(torch.load('./checkpoints/broad_p17/prior.pt', map_location=device))
     beta_vae_b17.load_state_dict(torch.load('./checkpoints/broad_p17/beta_vae_metric.pt', map_location=device))
     
-    # E. Broad-19 [2, 3, 5, 7, 11, 13, 17, 19]
-    vqvae_b19 = ConditionalVQVAE(vocab_size=19, hidden_dim=64, codebook_size=64, latent_dim=32, N=N, cond_dim=16)
+    # E. Broad-19 [2, 3, 5, 7, 11, 13, 17, 19] — hd=256 (matches this script's capacity)
+    vqvae_b19 = ConditionalVQVAE(vocab_size=19, hidden_dim=256, codebook_size=64, latent_dim=32, N=N, cond_dim=16)
     prior_b19 = PriorGRU(codebook_size=64, latent_dim=32, cond_dim=16, hidden_size=128, num_layers=2)
-    beta_vae_b19 = ConditionalBetaVAE(vocab_size=19, hidden_dim=64, latent_dim=32, N=N, cond_dim=16)
-    
-    vqvae_b19.load_state_dict(torch.load('./checkpoints/broad_p19/vqvae.pt', map_location=device))
-    prior_b19.load_state_dict(torch.load('./checkpoints/broad_p19/prior.pt', map_location=device))
-    beta_vae_b19.load_state_dict(torch.load('./checkpoints/broad_p19/beta_vae_metric.pt', map_location=device))
+    beta_vae_b19 = ConditionalBetaVAE(vocab_size=19, hidden_dim=256, latent_dim=32, N=N, cond_dim=16)
+
+    vqvae_b19.load_state_dict(torch.load('./checkpoints/broad_p19_hd256/vqvae.pt', map_location=device))
+    prior_b19.load_state_dict(torch.load('./checkpoints/broad_p19_hd256/prior.pt', map_location=device))
+    beta_vae_b19.load_state_dict(torch.load('./checkpoints/broad_p19_hd256/beta_vae_metric.pt', map_location=device))
     
     # Set all models to eval
     model_configs = [
