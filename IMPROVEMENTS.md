@@ -303,20 +303,15 @@ The bot prior's 45.78% accuracy (highest across all prior configs) shows better 
 
 ## Batch 5 — Planned
 
-### 26. Three-Level Hierarchy on Broad-23
+### 26. Three-Level Hierarchy on Broad-23 ✅
 
-**Problem**: The two-level hierarchy completely overcame the flat model's Broad-23 accuracy dip (item 22: 84.71% p=5 vs flat 64.32%). The three-level model improved on the two-level at Broad-11 (+2.7pp on p=5). It's unknown whether three levels compound the benefit at Broad-23, where the inter-prime competition is most severe.
+**Result** (Broad-23, N=128, hd=64, 210K params):
+- p=5: **87.47%** (new overall best)
+- p=7: **77.72%** (+6pp over 2-level Broad-23, +8.9pp over 2-level Broad-11)
+- p=11: 61.15%, p=13: 54.03%, p=17: 43.72%, p=19: 40.66%, p=23: 34.92%
+- Top prior: 32.92%, Mid: 26.19%, Bot: 36.52%
 
-**Plan**: Train `ThreeLevelVQVAE` on Broad-23 (9 primes, primes up to 23, N=128).
-
-**What to measure**: p=5 reconstruction accuracy vs two-level Broad-23 (84.71%) and three-level Broad-11 (82.02%). Success = three-level Broad-23 exceeds two-level Broad-23.
-
-**Command**:
-```bash
-python train_hierarchical_3level.py \
-  --primes 2 3 5 7 11 13 17 19 23 --N 128 \
-  --save_dir ./checkpoints/hierarchical_3level_broad23
-```
+Three levels compound with broad training: +2.76pp p=5 over 2-level Broad-23, +23.2pp over flat hd=256 Broad-23 at similar params (210K vs 1.2M). High-branching primes benefit most.
 
 ---
 

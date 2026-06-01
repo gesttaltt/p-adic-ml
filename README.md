@@ -500,21 +500,22 @@ The Lorentz model and the Poincaré ball are isometric (same geometry, different
 
 Four-stage training (`train_hierarchical_3level.py`): VQ-VAE → TopPriorGRU → ThreeLevelMidPriorGRU (conditioned on top) → ThreeLevelBotPriorGRU (conditioned on mid+top).
 
-**Results (Broad-11, $N=128$, hd=64, 209K params total):**
+**Results across all three-level configurations ($N=128$, hd=64):**
 
-| Metric | 2-Level N=64 | 3-Level N=128 |
-| :--- | :---: | :---: |
-| Val accuracy (all primes) | $78.03\%$ | $\mathbf{79.29\%}$ |
-| Recon $p=2$ | $98.40\%$ | $\mathbf{99.93\%}$ |
-| Recon $p=5$ | $79.35\%$ | $\mathbf{82.02\%}$ |
-| Recon $p=7$ | $63.19\%$ | $68.83\%$ |
-| Recon $p=11$ | $47.18\%$ | $47.51\%$ |
-| Top-prior accuracy | $19.94\%$ | $19.25\%$ |
-| Mid-prior accuracy | — | $33.47\%$ |
-| Bot-prior accuracy | $39.59\%$ | $\mathbf{45.78\%}$ ($29\times$ random) |
-| Parameters | $142\text{K}$ | $209\text{K}$ |
+| Config | Params | Val Acc | $p=5$ | $p=7$ | $p=11$ | Top-prior | Bot-prior |
+| :--- | ---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| 2-Level Broad-11 (ref) | 142K | $78.03\%$ | $79.35\%$ | $63.19\%$ | $47.18\%$ | $19.9\%$ | $39.6\%$ |
+| 2-Level Broad-23 (ref) | 143K | $63.52\%$ | $84.71\%$ | $71.70\%$ | $56.66\%$ | $18.5\%$ | $32.0\%$ |
+| Flat hd=256 Broad-23 (ref) | ~1.2M | — | $64.32\%$ | — | — | — | — |
+| **3-Level Broad-11** | **209K** | $79.29\%$ | $82.02\%$ | $68.83\%$ | $47.51\%$ | $19.3\%$ | $45.8\%$ |
+| **3-Level Broad-23** | **210K** | $65.65\%$ | $\mathbf{87.47\%}$ | $\mathbf{77.72\%}$ | $61.15\%$ | $32.9\%$ | $36.5\%$ |
 
-The three-level model outperforms the two-level N=64 model on $p=5$ (+2.7pp) and $p=7$ (+5.6pp) with comparable parameters. The bottom prior accuracy (45.78%) is the highest across any prior configuration — the bot prior is well-conditioned because it receives both mid and top context, leaving it with lower conditional entropy.
+**Key findings:**
+
+- **Three-level Broad-23 achieves 87.47% on $p=5$** — new overall best across all configurations. This is +2.76pp over two-level Broad-23 (84.71%), +5.45pp over three-level Broad-11 (82.02%), and **+23.2pp over flat hd=256 Broad-23 (64.32%) with similar parameter count (210K vs 1.2M).**
+- **p=7 accuracy reaches 77.72%** — +6pp over two-level Broad-23 (71.70%) and +8.9pp over two-level Broad-11. High-branching primes benefit most from the three-level structure, consistent with the finding that hierarchical gains scale with branching factor.
+- The three levels compound with broad training: each additional prime and each additional codebook level reinforces the other. The three-level Broad-23 model shows the clearest separation yet between small-prime near-perfect accuracy (p=2: 99.5%, p=3: 98.0%) and high-branching accuracy (p=7: 77.7%, p=11: 61.2%).
+- The bottom prior (36.5% accuracy, 23× random) is slightly lower than three-level Broad-11 (45.8%) — as expected, 9 primes provide more diversity for the bottom prior to model.
 
 ---
 
@@ -622,7 +623,21 @@ python train_hierarchical_3level.py --primes 2 3 5 7 11 --N 128
 ```
 Checkpoints saved to `./checkpoints/hierarchical_3level/`.
 
-### 13. Generate Poincaré Disk Plots
+### 13. Algebraic-Only Metric Alignment Evaluation
+Evaluates alignment on Hensel-lifted algebraic sequences only (seq_type==1):
+```bash
+python eval_algebraic_only.py
+```
+Output: `./plots/algebraic_alignment.md`.
+
+### 14. Three-Level Hierarchy on Broad-23
+```bash
+python train_hierarchical_3level.py \
+  --primes 2 3 5 7 11 13 17 19 23 --N 128 \
+  --save_dir ./checkpoints/hierarchical_3level_broad23
+```
+
+### 15. Generate Poincaré Disk Plots
 ```bash
 python scaling_analysis/poincare_embedding.py
 ```
