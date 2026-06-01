@@ -91,21 +91,17 @@
 
 ---
 
-### 10. Converged Curvature Sweep
+### 10. Converged Curvature Sweep ✅
 
-**Problem**: Current sweep reports (`scaling_analysis/curvature_sweep_{poincare,lorentz}.md`) are 3-epoch snapshots. Models are heavily underfit (~25% accuracy), so the only signal is the `c=5` instability. We can't conclude anything about optimal curvature.
+**Problem**: Prior sweep reports were 3-epoch snapshots (~25% accuracy) — too underfit to draw conclusions.
 
-**Plan**: Rerun `sweep_curvature.py` with `--epochs 15` (the normal training budget). Record whether `c=2` or `c=3` converges to better metric alignment than `c=1`. Also check whether the learnable curvature drifts to a different value.
+**Result**: Ran both manifolds at 15 epochs. Key findings:
 
-**What to measure**: Final validation accuracy and metric alignment at `c ∈ {0.5, 1, 2, 5}` and learnable, for both Poincaré and Lorentz manifolds.
+*Poincaré*: hard accuracy/alignment trade-off. c=0.5 best for accuracy (42.95%), c=5.0 best for alignment (0.01501). Phase transition around c≈1.5. Learnable c converges to 1.23 — stuck in the mediocre transition region, missing both optima.
 
-**Expected outcome**: `c=2` likely outperforms `c=1` for high-branching primes (p≥7). Learnable curvature expected to converge near `c=1.5–2.0` given the tree branching structure.
+*Lorentz*: monotone in c — higher c improves both accuracy and alignment. c=5.0 wins outright (33.05% acc, 0.07411 align). c=0.5 produces NaN (low-curvature instability). Learnable c drifts down to 0.59, away from the better-performing high-k regime.
 
-**Command**:
-```bash
-python sweep_curvature.py --manifold poincare --epochs 15
-python sweep_curvature.py --manifold lorentz  --epochs 15
-```
+**Practical recommendation**: c=5.0 Poincaré for alignment-focused runs; c=0.5 Poincaré for accuracy-focused; Lorentz always use k≥2.0.
 
 ---
 
