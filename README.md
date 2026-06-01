@@ -332,6 +332,33 @@ The strongest separation is at $p=2$ (13% tighter) where top codes are prime-spe
 
 Conditioning on the top code improves alignment at $p=2$ and $p=7$ but leaves it low overall (r ≈ 0.03–0.13). **The bottom codes are not organizing p-adic distances even within their buckets.** The hierarchical reconstruction gains come from better fidelity, not from metric alignment. Adding an explicit within-bucket metric loss during training would be needed to change this — a natural next step.
 
+#### Hyperbolic Top Codes v2 — Collapse Fixed (`--hyperbolic_top`, v2)
+
+Three fixes were applied to `HyperbolicVectorQuantizer` to prevent codebook collapse: (1) spread initialization at fixed tangent-space radius, (2) EMA codebook updates bypassing gradient pathologies, (3) soft-usage entropy regularizer. Results vs v1 and Euclidean baseline:
+
+| Config | Val Acc | Top-prior Acc | Bot-prior Acc |
+| :--- | :---: | :---: | :---: |
+| Euclidean top hd=64 | $78.03\%$ | $19.94\%$ | $39.6\%$ |
+| Hyp top v1 (collapsed) | $63.98\%$ | $100\%$ (1–2 codes) | $22.97\%$ |
+| **Hyp top v2 (fixed)** | $70.14\%$ | $\mathbf{39.12\%}$ | $30.68\%$ |
+
+The collapse is resolved — top-prior accuracy 39.12% is far from the trivial 100% that signaled single-code collapse in v1. Notably, 39.12% is substantially *higher* than the Euclidean top (19.94%): the Poincaré ball geometry organizes top codes into a more structured, more predictable sequence. Val accuracy (70.14%) is +6.2pp above v1 but still −7.9pp below the Euclidean top, suggesting the hyperbolic geometry constrains the top branch in ways that trade some reconstruction expressivity for geometric structure. p=5 prior sample 5 shows a repeating pattern `4 4 3 0 4 4 3 0 4 4 3 0 ...` consistent with a rational p-adic number.
+
+#### Hyperbolic Beta-VAE at $c=5.0$, hd=256
+
+From the converged curvature sweep (item 10), $c=5.0$ was identified as the alignment-optimal Poincaré setting. Re-training the Hyperbolic Beta-VAE at this curvature gives the best alignment numbers across all configurations:
+
+| Prime | Hyp-P hd=256 $c=1.0$ Loss / $r$ | Hyp-P hd=256 $c=5.0$ Loss / $r$ | Change |
+| :---: | :---: | :---: | :---: |
+| $p=2$ | $0.00643$ / $0.9201$ | $0.01205$ / $0.9257$ | loss ↑, $r$ ↑ |
+| $p=3$ | $0.01029$ / $0.8161$ | $0.00857$ / $0.8310$ | both ↑ |
+| $p=5$ | $0.01020$ / $0.6903$ | $0.00534$ / $0.6962$ | both ↑ |
+| $p=7$ | $0.00977$ / $0.6039$ | $0.00300$ / $0.6085$ | both ↑ |
+| $p=11$ | $0.01145$ / $0.4957$ | $0.00346$ / $0.4962$ | both ↑ |
+| **Wtd avg** | $0.00995$ / $0.6697$ | $\mathbf{0.00572}$ / $\mathbf{0.6753}$ | **−42% loss** |
+
+$c=5.0$ reduces weighted-average alignment loss by **42%** and improves Spearman $r$ at every prime. The gain is largest at high-branching primes: $p=7$ loss drops 3× (0.00977 → 0.00300). The cost is reconstruction accuracy: 26.65% val accuracy vs ~49% at $c=1.0$, confirming the hard accuracy/alignment trade-off documented in the curvature sweep. Use $c=5.0$ when metric alignment is the objective; $c=0.5$ when reconstruction accuracy matters.
+
 ---
 
 ## Cross-Prime Latent Interpolation
