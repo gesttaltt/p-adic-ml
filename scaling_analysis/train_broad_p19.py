@@ -184,14 +184,6 @@ def main():
         if len(p5_z_list) > 1:
             metrics[model_name]['vae_metric_p5'] = compute_metric_loss(torch.stack(p5_z_list), torch.stack(p5_digits_list), torch.full((len(p5_z_list),), 5, dtype=torch.long, device=device)).item()
 
-    # Print results table
-    print("\n" + "="*110)
-    print(f"{'Metric':<20} | {'Restricted':<15} | {'Broad-11':<15} | {'Broad-13':<15} | {'Broad-17':<15} | {'Broad-19 (New)':<15}")
-    print("-" * 110)
-    for k in sorted(metrics['restricted'].keys()):
-        print(f"{k:<20} | {metrics['restricted'][k]:15.5f} | {metrics['broad_11'][k]:15.5f} | {metrics['broad_13'][k]:15.5f} | {metrics['broad_17'][k]:15.5f} | {metrics['broad_19'][k]:15.5f}")
-    print("="*110)
-    
     # -------------------------------------------------------------
     # 5. Save Results Report
     # -------------------------------------------------------------
