@@ -374,12 +374,12 @@ This allows the decoder to selectively weight which mid code is most relevant fo
 
 ---
 
-### 31. Evaluation on Held-Out Algebraic Sequences Only
+### 31. Evaluation on Held-Out Algebraic Sequences Only ✅
 
-**Problem**: All evaluations mix rational, algebraic, and random sequences in the test set. Random sequences have no p-adic structure (they're i.i.d. uniform), so they inflate reconstruction accuracy for any model that learns digit-frequency priors. Algebraic sequences (Hensel-lifted roots) are the most structurally challenging — they follow precise non-periodic patterns determined by the polynomial. A cleaner benchmark would evaluate only on algebraic sequences.
+**Result** (`eval_algebraic_only.py`):
 
-**Plan**: Modify `eval_hyperbolic_hd256.py`, `eval_conditional_alignment.py`, and `eval_hierarchical_alignment.py` to filter to `seq_type == 1` (algebraic only). Report algebraic-only Spearman r and alignment loss alongside the mixed numbers.
+Spearman r changes by ≤0.003 across all 4 models — model ranking is completely stable between algebraic-only and mixed. There is no "algebraic penalty" in rank-ordering ability.
 
-**Expected outcome**: Alignment scores will decrease (algebraic sequences are harder), but the relative ranking of models should stay the same. If the Euclidean model degrades more on algebraic sequences than the Hyperbolic model, this would strengthen the case for hyperbolic geometry.
+Alignment *loss* is less stable: c=5.0 Poincaré shows dramatically higher loss on algebraic p=2 (0.226 vs 0.012 mixed, 19× worse) while Spearman r barely changes — revealing that c=5.0's distance scaling is calibrated to the full mixture but doesn't generalize well to algebraic-only p=2. All other models show ≤2% change in loss.
 
-**Estimated scope**: Small. Just a filter change in existing eval scripts, no training.
+**Conclusion**: The existing mixed evaluations are reliable benchmarks. Model rankings don't need to be re-run with algebraic filtering. The one actionable insight: c=5.0's alignment loss advantage may partly reflect calibration to the mixture rather than a fundamental improvement on algebraic structure.
