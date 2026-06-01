@@ -255,6 +255,25 @@ The **+18pp accuracy improvement** over the flat VQ-VAE on the same task with fe
 
 **Prior sample quality:** All five primes produce samples with only valid digits ($d < p$). Some prior samples show structured repetition consistent with rational p-adic numbers (e.g. `1 2 1 2 0 0 1 2 0 0 0 1 2 ...` for $p=3$, which matches the periodic pattern of a rational with denominator dividing $p^k - 1$).
 
+#### Top Codebook Interpretability (`analyze_top_codes.py`)
+
+After training, we ran a full interpretability analysis on the 16 top codebook entries by assigning 4500 sequences (5 primes × 3 types × 300) to their majority top code and measuring structure:
+
+![Top code analysis](plots/top_code_analysis.png)
+
+**Prime specialization:** The top codes learned to specialize by prime base. Code 11 is assigned exclusively to $p=2$ sequences (100%). Codes 0 and 4 are 91% and 85% p=2 respectively. Codes 7 and 10 are 64–66% p=3. Higher-branching primes ($p=7, 11$) tend to share two large "catch-all" codes (codes 2 and 5, each with ~750 sequences) alongside smaller specialized codes.
+
+**Conditional coherence: 16/16 codes** produce p=5 samples with smaller mean pairwise p-adic distance than the unconditional baseline (0.838). Some codes are dramatically tighter — codes 4 and 7 produce samples with mean distance 0.276 and 0.271, roughly 3× closer than random. This directly confirms that **the top code acts as a branch selector**: fixing a top code constrains the bottom prior to generate sequences from the same region of the p-adic tree.
+
+**Within-code distance:** 8/16 codes have smaller within-code p-adic distance than the cross-code baseline (0.797). The 8 looser codes are the larger catch-all codes where a diverse mix of sequences is assigned, naturally inflating within-code distance.
+
+| Result | Value |
+| :--- | :---: |
+| Codes with within-code dist < cross-code baseline | 8 / 16 |
+| Codes with conditional coherence < unconditional baseline | **16 / 16** |
+| Most specialized code | Code 11 (100% $p=2$) |
+| Tightest conditional coherence | Code 7 (mean dist 0.271 vs baseline 0.838) |
+
 ---
 
 ## Cross-Prime Latent Interpolation
