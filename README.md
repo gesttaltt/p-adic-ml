@@ -70,9 +70,9 @@ Continuous embedding wins decisively on reconstruction accuracy. The metric alig
 
 ### 2. Capacity Scaling (hidden\_dim 64 → 256)
 
-The Broad-23 accuracy dip hinted at a capacity bottleneck. We tested this directly by training Broad-19 (8 primes) at two hidden dimensions with identical seed and hyperparameters.
+The Broad-23 accuracy dip hinted at a capacity bottleneck. We tested this in two ways: a controlled A/B on Broad-19 at $N=32$, and then a full re-run of the Broad-19 and Broad-23 scaling scripts at $N=64$ with `hidden_dim=256` as the new default.
 
-#### Results (Broad-19, $N=32$)
+#### Controlled A/B — Broad-19, $N=32$ (`experiment_capacity_scaling.py`)
 
 | Metric | hidden\_dim=64 | hidden\_dim=256 | Winner |
 | :--- | :---: | :---: | :---: |
@@ -81,7 +81,26 @@ The Broad-23 accuracy dip hinted at a capacity bottleneck. We tested this direct
 | Metric Alignment $p=2$ | $0.03669$ | **$0.01944$** | hd=256 |
 | Metric Alignment $p=5$ | $0.08438$ | **$0.05402$** | hd=256 |
 
-**hd=256 wins 3/4 metrics.** The 10-point accuracy jump on $p=5$ confirms the capacity bottleneck hypothesis. The p=2 marginal decrease is within training variance — both are near-perfect for the binary tree. `train_broad_p19.py` now defaults to `hidden_dim=256`.
+hd=256 wins 3/4 metrics at $N=32$. The 10-point accuracy jump on $p=5$ confirms the capacity bottleneck hypothesis.
+
+#### Broad-19 hd=256 at $N=64$ (`train_broad_p19.py`, continuous PrimeEmbedder)
+
+Full training run (12 VQ-VAE epochs + 12 Prior epochs + 15 Beta-VAE epochs) evaluated on a held-out set of 200 sequences per type per prime:
+
+| Metric | Broad-19 hd=256 |
+| :--- | :---: |
+| VQ-VAE Accuracy $p=2$ (%) | $\mathbf{99.78}$ |
+| VQ-VAE Accuracy $p=5$ (%) | $\mathbf{73.81}$ |
+| Beta-VAE Metric Alignment $p=2$ | $0.01210$ |
+| Beta-VAE Metric Alignment $p=5$ | $0.01261$ |
+
+The $p=5$ VQ-VAE accuracy of **73.81%** is the highest recorded across all configurations — surpassing Broad-17 hd=64 (69.87%) by +3.9pp and Broad-19 hd=64 (67.53%) by +6.3pp. The near-perfect $p=2$ accuracy (99.78%) confirms the binary tree is saturated at this capacity.
+
+> **Note on metric alignment comparison**: these numbers use the current continuous `PrimeEmbedder` architecture. The original scaling table (Restricted → Broad-23) used the legacy categorical embedding; metric alignment values are not directly comparable across the two architectures.
+
+#### Broad-23 hd=256
+
+Results pending — `train_broad_p23.py` running. Will update once complete.
 
 ---
 

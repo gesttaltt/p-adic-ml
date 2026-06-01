@@ -242,16 +242,18 @@ def main():
         vocab_size=19,
         N=64,
         save_path='./plots/padic_tree_19.png',
-        device=device
+        device=device,
+        hidden_dim=hidden_dim,
     )
-    
+
     generate_poincare_disk(
         vqvae_path=vqvae_new_path,
         prior_path=prior_new_path,
         p=19,
         vocab_size=19,
         save_path='./plots/poincare_p19.png',
-        device=device
+        device=device,
+        hidden_dim=hidden_dim,
     )
     
     # Copy to artifacts directory if environment variable is set and exists

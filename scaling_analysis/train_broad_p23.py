@@ -283,6 +283,7 @@ def main():
         N=64,
         save_path='./plots/padic_tree_23.png',
         device=device,
+        hidden_dim=hidden_dim,
     )
 
     generate_poincare_disk(
@@ -292,6 +293,7 @@ def main():
         vocab_size=vocab_size_new,
         save_path='./plots/poincare_p23.png',
         device=device,
+        hidden_dim=hidden_dim,
     )
     
     print("Scaling comparison for p=23 finished successfully!")

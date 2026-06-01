@@ -7,11 +7,11 @@ from models import ConditionalVQVAE, PriorGRU
 from dataset import PadicDataset
 from visualize import get_path_coords
 
-def generate_tree_plot(vqvae_path, prior_path, p, vocab_size, N=64, save_path='./plots/tree.png', device='cpu'):
+def generate_tree_plot(vqvae_path, prior_path, p, vocab_size, N=64, save_path='./plots/tree.png', device='cpu', hidden_dim=64):
     print(f"Generating {p}-adic tree visualization using model at {vqvae_path}...")
 
     # 1. Load Models
-    vqvae = ConditionalVQVAE(vocab_size=vocab_size, hidden_dim=64, codebook_size=64, latent_dim=32, N=N)
+    vqvae = ConditionalVQVAE(vocab_size=vocab_size, hidden_dim=hidden_dim, codebook_size=64, latent_dim=32, N=N)
     vqvae.load_state_dict(torch.load(vqvae_path, map_location=device))
     vqvae.to(device).eval()
 

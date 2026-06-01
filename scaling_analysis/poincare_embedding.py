@@ -43,11 +43,11 @@ def get_poincare_coords(digits, p, max_depth=16, c=0.25):
         
     return x, y
 
-def generate_poincare_disk(vqvae_path, prior_path, p, vocab_size, N=64, save_path='./plots/poincare.png', device='cpu'):
+def generate_poincare_disk(vqvae_path, prior_path, p, vocab_size, N=64, save_path='./plots/poincare.png', device='cpu', hidden_dim=64):
     print(f"Generating Poincaré disk for {p}-adic numbers...")
 
     # 1. Load Models
-    vqvae = ConditionalVQVAE(vocab_size=vocab_size, hidden_dim=64, codebook_size=64, latent_dim=32, N=N)
+    vqvae = ConditionalVQVAE(vocab_size=vocab_size, hidden_dim=hidden_dim, codebook_size=64, latent_dim=32, N=N)
     vqvae.load_state_dict(torch.load(vqvae_path, map_location=device))
     vqvae.to(device).eval()
 
