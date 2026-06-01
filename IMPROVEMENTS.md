@@ -153,3 +153,105 @@ Results (Broad-11, N=64, hd=64, 141K params total):
 - Prior samples: all valid digits; some show structured repetition matching rational p-adic patterns
 
 Files: `hierarchical_vqvae.py`, `train_hierarchical.py`
+
+---
+
+## Batch 3 — Planned
+
+### 14. Top Codebook Interpretability Analysis
+
+**Problem**: The top prior reached only 19.9% accuracy (vs 1/16 = 6.25% random), suggesting it's learning something but we don't know *what*. The key claim of the hierarchical model is that the 16 top codes capture "global branch identity." This needs to be verified empirically, not assumed.
+
+**Plan**: For each of the 16 top codes, collect all training sequences assigned to it and report:
+1. Which primes dominate each code (prime distribution per code)
+2. Which sequence types dominate (rational / algebraic / random per code)
+3. The most common first-digit prefix per code (does top code correlate with early digits?)
+4. Within-code p-adic distance distribution vs cross-code p-adic distance (do sequences sharing a top code have smaller p-adic distances than random pairs?)
+
+**Expected outcome**: If the hierarchy is working as intended, each top code should be dominated by a small set of first-digit prefixes, and within-code p-adic distances should be systematically smaller than cross-code distances. A uniform distribution across primes and prefix diversity would indicate the top codes are not encoding tree-branch identity.
+
+**Where to add code**: New script `analyze_top_codes.py`. No training required — loads `./checkpoints/hierarchical/vqvae.pt` and runs analysis on the full dataset.
+
+**Success metric**: Mean within-code p-adic distance < 0.5 × mean cross-code p-adic distance for at least 10/16 codes.
+
+---
+
+### 15. Conditional Generation Coherence Test
+
+**Problem**: Prior samples from `BotPriorGRU` look reasonable, but we haven't tested whether fixing the top code constrains the bottom samples in a semantically meaningful way. If the top code is doing its job, samples conditioned on the same top code should cluster in the same region of the p-adic tree.
+
+**Plan**:
+1. For each of the 16 top codes, sample 50 bottom sequences using `BotPriorGRU`.
+2. Compute pairwise p-adic distances within each top-code's samples.
+3. Compare to 50 unconditional samples (random top code).
+4. Report: mean within-code distance, mean cross-code distance, and whether fixing the top code reduces variance.
+
+**Expected outcome**: Within-code samples should share longer common prefixes than random pairs, confirming the top code acts as a branch selector.
+
+**Where to add code**: Extend `analyze_top_codes.py` with a `test_conditional_coherence()` function, or add to `train_hierarchical.py`'s evaluation section.
+
+---
+
+### 16. Hierarchical VQ-VAE at hd=256
+
+**Problem**: The hierarchical model was benchmarked at `hidden_dim=64`. All other capacity experiments showed hd=256 gives +10pp on high-branching primes. We don't know if the hierarchical architecture still benefits from capacity scaling, or whether the two-level structure already solves the capacity bottleneck.
+
+**Plan**: Retrain `HierarchicalVQVAE` with `hidden_dim=256` on Broad-11, N=64. Same epochs and hyperparameters as the hd=64 run for a fair comparison.
+
+**What to measure**: Val accuracy, per-prime reconstruction accuracy, top/bottom prior accuracy.
+
+**Expected outcome**: If the +18pp hierarchical gain is orthogonal to capacity, hd=256 should add another +5–10pp on top (p=7, p=11 specifically). If the hierarchy already saturates the capacity, gains will be smaller.
+
+**Command**:
+```bash
+python train_hierarchical.py --primes 2 3 5 7 11 --N 64 --hidden_dim 256 \
+  --save_dir ./checkpoints/hierarchical_hd256
+```
+
+---
+
+### 17. Hierarchical VQ-VAE on Broad-19
+
+**Problem**: The hierarchical model was only trained on Broad-11. The key open question from Batch 2 is whether the Broad-23 accuracy dip is fundamental or architectural. The flat VQ-VAE plateaus at Broad-23 even at hd=256. The hierarchical architecture might handle more primes better because each level only models a subset of the total entropy — reducing the per-prime competition for codebook capacity.
+
+**Plan**: Train `HierarchicalVQVAE` on Broad-19 (8 primes, primes up to 19), evaluate on p=2 and p=5.
+
+**What to measure**: VQ-VAE accuracy and metric alignment on p=2 and p=5 vs flat Broad-19 hd=256 (73.15% p=5 accuracy).
+
+**Expected outcome**: If the hierarchical structure mitigates the capacity competition between primes, Broad-19 hierarchical should approach or exceed 73.15% p=5 accuracy with fewer parameters than the flat hd=256 model.
+
+**Command**:
+```bash
+python train_hierarchical.py --primes 2 3 5 7 11 13 17 19 --N 64 \
+  --save_dir ./checkpoints/hierarchical_broad19
+```
+
+---
+
+### 18. Metric Alignment Evaluation for Hierarchical Model
+
+**Problem**: All metric alignment results so far are for flat Euclidean and Hyperbolic models. We don't know whether the hierarchical VQ-VAE's strong reconstruction accuracy (+18pp) translates into better ultrametric alignment. The two quantities are not correlated in general — a model can reconstruct well but organize the latent space poorly (or vice versa).
+
+**Plan**: Extract the bottom-level quantized representations `z_q_bot` from the hierarchical VQ-VAE and compute:
+1. Per-prime metric alignment loss (MSE between normalized pairwise Euclidean distances and p-adic distances)
+2. Per-prime Spearman r
+
+Compare against the Euclidean hd=64 and hd=256 flat models using `eval_hyperbolic_hd256.py` as a template.
+
+**What to measure**: Metric alignment loss and Spearman r for p=2,3,5,7,11 on the hierarchical bottom codes.
+
+**Where to add code**: Extend `eval_hyperbolic_hd256.py` or create `eval_hierarchical_alignment.py`.
+
+---
+
+### 19. Hyperbolic Top Codes
+
+**Problem**: The top branch of the hierarchical VQ-VAE quantizes to Euclidean codebook vectors. But the top codes are supposed to represent global tree-branch identity — exactly the kind of hierarchical structure that hyperbolic geometry models naturally. Replacing the top-level Euclidean quantizer with a Poincaré-ball codebook could give the top codes a geometry that better matches the branching structure they need to represent.
+
+**Plan**: Add `manifold='poincare'` option to the top branch of `HierarchicalVQVAE`. The top codebook embeddings become `geoopt.ManifoldParameter` on the Poincaré ball. The VQ lookup uses geodesic distance instead of Euclidean. The top prior still operates on indices, so the prior architecture is unchanged.
+
+**Estimated scope**: Medium. Requires modifying `VectorQuantizer` (or adding `HyperbolicVectorQuantizer`) and updating `HierarchicalVQVAE.encode()`.
+
+**Expected outcome**: Hyperbolic top codes should improve metric alignment on high-branching primes (p≥7) while maintaining or improving reconstruction accuracy, since the top-level geometry now matches the tree structure it represents.
+
+**Prerequisite**: Items 14 and 15 should confirm the top codes are actually encoding tree-branch structure before investing in this change.
