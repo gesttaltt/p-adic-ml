@@ -227,15 +227,13 @@ Hierarchical bottom codes have weighted-avg alignment loss 0.161 and Spearman r=
 
 ## Batch 4 — Planned
 
-### 20. Conditional Metric Alignment
+### 20. Conditional Metric Alignment ✅
 
-**Problem**: Item 18 showed that measuring global metric alignment against hierarchical bottom codes gives misleading results (Spearman r≈0.05). The correct test is *conditional* alignment: within sequences assigned to the same top code, does bottom-code Euclidean distance correlate with p-adic distance? This would confirm that the bottom level genuinely refines the tree structure within each branch, not just memorises tokens.
+**Result** (`eval_conditional_alignment.py`):
 
-**Plan**: For each top code $k$, collect all sequences assigned to it, encode to get $z_q^{bot}$, and compute Spearman $r$ between pairwise Euclidean bottom-code distance and pairwise p-adic distance. Report mean conditional $r$ across all 16 codes, weighted by code population. Compare to the unconditional $r$ (0.048) and to the flat Euclidean model (0.656).
+*Top-code branch alignment*: within-bucket p-adic distances smaller than cross-bucket for all 5 primes (ratios 0.868–0.974). Strongest at p=2 (13% tighter, where codes are prime-specialized); weakest at p=7,11 (2.6%).
 
-**Expected outcome**: Conditional $r$ should be substantially higher than the unconditional 0.048 if the bottom codes are organising within-bucket p-adic distances. If conditional $r$ ≈ 0, the bottom codes are not doing metric alignment even locally, and we should add a within-bucket metric loss to the training objective.
-
-**Where to add code**: Extend `analyze_top_codes.py` with a `conditional_metric_alignment()` function. No training required.
+*Conditional bottom-code alignment*: Spearman r within (top-code, prime) buckets remains low (0.03–0.13). Conditioning on the top code improves r at p=2 (+0.037) and p=7 (+0.037) but leaves others unchanged or slightly worse. Bottom codes do not organise p-adic distances even locally — reconstruction gains are from fidelity, not metric alignment. An explicit within-bucket metric loss during training would be needed.
 
 ---
 
@@ -257,21 +255,14 @@ Hierarchical bottom codes have weighted-avg alignment loss 0.161 and Spearman r=
 
 ---
 
-### 22. Hierarchical VQ-VAE on Broad-23
+### 22. Hierarchical VQ-VAE on Broad-23 ✅
 
-**Problem**: The flat VQ-VAE on Broad-23 shows a persistent accuracy dip even at hd=256. We showed in item 17 that hierarchical Broad-19 hd=64 beats flat Broad-19 hd=256 by +9.6pp. Does the same synergy hold at Broad-23, overcoming the plateau that capacity scaling could not?
+**Result** (Broad-23, N=64, hd=64, 143K params):
+- Val acc: 63.52%
+- p=2: 99.32%, p=5: **84.71%**, p=7: 71.70%, p=11: 56.66%, p=13: 49.23%, p=17: 40.16%, p=19: 37.22%, p=23: 32.73%
+- Top-prior: 18.50%, Bottom-prior: 31.98%
 
-**Plan**: Train `HierarchicalVQVAE` on Broad-23 (9 primes, primes up to 23), evaluate on p=2 and p=5.
-
-**What to measure**: VQ-VAE p=5 accuracy vs flat Broad-23 hd=256 (64.32%). If hierarchical Broad-23 exceeds Broad-19 hierarchical (82.72%), the hierarchy completely overcomes the Broad-23 plateau.
-
-**Expected outcome**: The hierarchy should close most or all of the Broad-23 dip. Each of the two codebook levels only needs to model a subset of the entropy from 9 primes, reducing inter-prime competition more effectively than raw capacity scaling.
-
-**Command**:
-```bash
-python train_hierarchical.py --primes 2 3 5 7 11 13 17 19 23 --N 64 \
-  --save_dir ./checkpoints/hierarchical_broad23
-```
+**Key result**: The hierarchy completely overcomes the Broad-23 plateau. Flat model dipped: Broad-19 hd=256 73.15% → Broad-23 hd=256 64.32% (−9pp). Hierarchical model kept climbing: Broad-11 79.35% → Broad-19 82.72% → Broad-23 **84.71%** (+2pp). With 143K params vs the flat model's ~1.2M, hierarchical Broad-23 beats flat hd=256 Broad-23 by +20.4pp on p=5.
 
 ---
 

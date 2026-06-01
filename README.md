@@ -244,17 +244,19 @@ The top-down decoder conditioning forces the top level to capture global branch 
 | :--- | ---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | Flat hd=64, Broad-11 | ~300K | $\sim 60\%$ | — | $\sim 60\%$ | — | — | — | — |
 | Flat hd=256, Broad-19 | ~1.2M | — | — | $73.15\%$ | — | — | — | — |
+| Flat hd=256, Broad-23 | ~1.2M | — | — | $64.32\%$ | — | — | — | — |
 | **Hier hd=64, Broad-11** | **142K** | $78.03\%$ | $98.40\%$ | $79.35\%$ | $63.19\%$ | $47.18\%$ | $19.9\%$ | $39.6\%$ |
 | **Hier hd=256, Broad-11** | **1.98M** | $79.38\%$ | $98.92\%$ | $82.30\%$ | $68.89\%$ | $46.98\%$ | $37.2\%$ | $32.3\%$ |
-| **Hier hd=64, Broad-19** | **143K** | $64.45\%$ | $99.18\%$ | $\mathbf{82.72\%}$ | $68.80\%$ | $52.23\%$ | $29.1\%$ | $30.6\%$ |
+| **Hier hd=64, Broad-19** | **143K** | $64.45\%$ | $99.18\%$ | $82.72\%$ | $68.80\%$ | $52.23\%$ | $29.1\%$ | $30.6\%$ |
+| **Hier hd=64, Broad-23** | **143K** | $63.52\%$ | $99.32\%$ | $\mathbf{84.71\%}$ | $71.70\%$ | $56.66\%$ | $18.5\%$ | $32.0\%$ |
 
 **Key findings:**
 
 - **+18pp over the flat VQ-VAE** (Broad-11, hd=64): the two-level quantization lets each codebook model a subset of the total entropy. Top captures global branch identity; bottom refines within that branch.
-- **Hierarchical hd=64 Broad-19 beats flat hd=256 Broad-19 by +9.6pp on $p=5$ with 8× fewer parameters.** This is the sharpest result: the hierarchical architecture provides a more fundamental improvement than capacity scaling. The multi-task regularization from 8 primes combines with the hierarchical structure — each top code specializes across more branches, giving the bottom richer conditioning.
-- **hd=256 adds only +3pp on $p=5$** for the hierarchical Broad-11 model (vs +10pp for the flat model). The hierarchy has largely solved the capacity bottleneck at hd=64 — the two levels divide the problem enough that neither is constrained.
-- **Top-prior accuracy jumps from 19.9% → 37.2%** at hd=256, nearly doubling. The bigger encoder gives the top branch sharper global representations. The bottom-prior accuracy drops slightly (39.6% → 32.3%) — a sign of better factorization: the top is now capturing more of the global entropy, leaving the bottom prior with higher conditional uncertainty, which is the intended behavior.
-- **Broad-19 per-prime**: $p=5$ 82.7%, $p=7$ 68.8%, $p=11$ 52.2%, $p=13$ 46.8%, $p=17$ 37.9%, $p=19$ 34.5%. The drop at $p \geq 13$ is expected (high branching, large digit vocabulary). All samples use valid digits throughout.
+- **Hierarchical hd=64 Broad-19 beats flat hd=256 Broad-19 by +9.6pp on $p=5$ with 8× fewer parameters.**
+- **Hierarchical Broad-23 (143K params) achieves 84.71% on $p=5$ — completely overcoming the flat model's Broad-23 dip.** The flat model dipped from Broad-19 to Broad-23 even at hd=256 (73.15% → 64.32%). The hierarchical model continues to improve: Broad-11 79.35% → Broad-19 82.72% → Broad-23 **84.71%**. Adding the 23rd prime still helps because the hierarchical factorisation prevents the capacity competition that caused the flat model to plateau.
+- **hd=256 adds only +3pp on $p=5$** for hierarchical Broad-11 — the hierarchy largely solves the capacity bottleneck that required hd=256 in flat models.
+- **Broad-23 per-prime**: $p=2$ 99.3%, $p=5$ 84.7%, $p=7$ 71.7%, $p=11$ 56.7%, $p=13$ 49.2%, $p=17$ 40.2%, $p=19$ 37.2%, $p=23$ 32.7%. All samples use valid digits throughout.
 
 **Prior sample quality:** All primes produce samples with only valid digits ($d < p$). Some prior samples show structured repetition consistent with rational p-adic numbers (e.g. `1 2 1 2 0 0 1 2 0 0 0 1 2 ...` for $p=3$, which matches the periodic pattern of a rational with denominator dividing $p^k - 1$).
 
@@ -304,7 +306,31 @@ The bottom-level quantized representations were evaluated against flat Euclidean
 | $p=11$ | $0.06412$ / $0.452$ | $0.01695$ / $0.499$ | $0.086$ / $0.032$ | $0.086$ / $0.034$ | $0.085$ / $0.037$ |
 | **Wtd avg** | $0.038$ / $0.656$ | $\mathbf{0.010}$ / $\mathbf{0.671}$ | $0.161$ / $0.048$ | $0.161$ / $0.055$ | $0.159$ / $0.074$ |
 
-**Interpretation — why this is expected and correct:** The hierarchical bottom codes have ~4× higher alignment loss and ~13× lower Spearman $r$ than the flat Euclidean model. This is not a failure — it is the correct behavior for a factorized representation. The bottom codes encode *within-bucket* variation (fine-grained digit patterns given a top code's branch identity); they are not supposed to globally organize all sequence-to-sequence distances. The global tree distance is handled by the top codes, as confirmed by the interpretability analysis (16/16 conditional coherence). Measuring global metric alignment against bottom codes alone conflates the two levels. A proper alignment metric for the hierarchical model would measure: (1) top-code alignment with p-adic distance at the branch level, and (2) conditional bottom-code alignment within sequences sharing the same top code.
+**Interpretation — why this is expected and correct:** The hierarchical bottom codes have ~4× higher alignment loss and ~13× lower Spearman $r$ than the flat Euclidean model. This is not a failure — it is the correct behavior for a factorized representation. The bottom codes encode *within-bucket* variation; global tree distance is handled by the top codes. A proper alignment evaluation (`eval_conditional_alignment.py`) breaks this into two parts:
+
+**Top-code branch alignment** — within-bucket p-adic distances are smaller than cross-bucket for all 5 primes:
+
+| Prime | Within-bucket dist | Cross-bucket dist | Ratio |
+| :---: | :---: | :---: | :---: |
+| $p=2$ | $0.577$ | $0.665$ | $0.868$ ✓ |
+| $p=3$ | $0.738$ | $0.774$ | $0.953$ ✓ |
+| $p=5$ | $0.837$ | $0.865$ | $0.967$ ✓ |
+| $p=7$ | $0.841$ | $0.864$ | $0.974$ ✓ |
+| $p=11$ | $0.904$ | $0.928$ | $0.974$ ✓ |
+
+The strongest separation is at $p=2$ (13% tighter) where top codes are prime-specialized; weaker at $p=7, 11$ (2.6%) where codes are more mixed.
+
+**Conditional bottom-code alignment** — Spearman $r$ within (top-code, prime) buckets vs global:
+
+| Prime | Unconditional $r$ | Conditional $r$ | Change |
+| :---: | :---: | :---: | :---: |
+| $p=2$ | $0.090$ | $0.127$ | +0.037 ↑ |
+| $p=3$ | $0.063$ | $0.058$ | $\approx 0$ |
+| $p=5$ | $0.049$ | $0.027$ | −0.022 |
+| $p=7$ | $0.034$ | $0.071$ | +0.037 ↑ |
+| $p=11$ | $0.032$ | $0.034$ | $\approx 0$ |
+
+Conditioning on the top code improves alignment at $p=2$ and $p=7$ but leaves it low overall (r ≈ 0.03–0.13). **The bottom codes are not organizing p-adic distances even within their buckets.** The hierarchical reconstruction gains come from better fidelity, not from metric alignment. Adding an explicit within-bucket metric loss during training would be needed to change this — a natural next step.
 
 ---
 
