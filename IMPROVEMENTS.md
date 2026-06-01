@@ -298,3 +298,88 @@ Per-prime: p=7 loss 0.00300 (3× better than c=1.0's 0.00977). c=5.0 wins on los
 Three levels: top N/8=16 tokens (codebook 16), mid N/4=32 (codebook 32), bot N/2=64 (codebook 64). Four-stage training: VQ-VAE → TopPrior → MidPrior|top → BotPrior|mid,top.
 
 The bot prior's 45.78% accuracy (highest across all prior configs) shows better conditioning — receiving both mid and top context leaves it with lower conditional entropy. Files: `hierarchical_3level.py`, `train_hierarchical_3level.py`.
+
+---
+
+## Batch 5 — Planned
+
+### 26. Three-Level Hierarchy on Broad-23
+
+**Problem**: The two-level hierarchy completely overcame the flat model's Broad-23 accuracy dip (item 22: 84.71% p=5 vs flat 64.32%). The three-level model improved on the two-level at Broad-11 (+2.7pp on p=5). It's unknown whether three levels compound the benefit at Broad-23, where the inter-prime competition is most severe.
+
+**Plan**: Train `ThreeLevelVQVAE` on Broad-23 (9 primes, primes up to 23, N=128).
+
+**What to measure**: p=5 reconstruction accuracy vs two-level Broad-23 (84.71%) and three-level Broad-11 (82.02%). Success = three-level Broad-23 exceeds two-level Broad-23.
+
+**Command**:
+```bash
+python train_hierarchical_3level.py \
+  --primes 2 3 5 7 11 13 17 19 23 --N 128 \
+  --save_dir ./checkpoints/hierarchical_3level_broad23
+```
+
+---
+
+### 27. Within-Bucket Metric Alignment Loss
+
+**Problem**: Item 20 showed that bottom codes don't organise p-adic distances even within top-code buckets (conditional Spearman r ≈ 0.03–0.13). The hierarchical model's +18pp reconstruction advantage comes entirely from fidelity, not from metric structure. Adding an explicit metric alignment term to the hierarchical training objective should combine both gains.
+
+**Plan**: Extend `train_hierarchical.py` with an optional `--gamma_bucket` loss: for each mini-batch, group sequences by majority top code, and within each group compute the standard `compute_metric_loss(z_q_bot_flat, digits, p)` from `metric_alignment.py`. Add this loss term weighted by `gamma_bucket` to the VQ-VAE training objective (Stage 1 only; priors are trained independently).
+
+**What to measure**: Conditional Spearman r (from `eval_conditional_alignment.py`) vs baseline (r ≈ 0.05–0.13 without the loss). Also verify reconstruction accuracy doesn't drop more than 2pp.
+
+**Expected outcome**: Conditional r should improve toward the flat Euclidean Beta-VAE's 0.656, while reconstruction accuracy remains near 78% (2-level) or 79% (3-level). This would make the hierarchical model dominant on both dimensions.
+
+**Estimated scope**: Small. The change is a few lines in `train_hierarchical.py`'s training loop; `compute_metric_loss` already handles batches with mixed primes by masking same-prime pairs.
+
+---
+
+### 28. Hierarchical Cascade on Broad-23
+
+**Problem**: Item 23 used the Broad-11 hierarchical model (78% precision ceiling at slow-path-only) as the slow path. The Broad-23 hierarchical model achieves 84.71% p=5 accuracy, a significantly better slow path. Does upgrading the slow path from Broad-11 to Broad-23 further raise the cascade precision ceiling?
+
+**Plan**: Run `evaluate_cascade_hierarchical.py` with the `hierarchical_broad23` checkpoint instead of `hierarchical`. Requires updating `HIER_DIR` to `./checkpoints/hierarchical_broad23` and `VOCAB` to the Broad-23 value.
+
+**What to measure**: Precision at τ=0 (slow-path only) and precision at 50% fast-path rate.
+
+**Expected outcome**: Precision ceiling ≥ 90% (vs 93.9% for Broad-11); the Broad-23 model has better p=5 reconstruction but evaluating with the Broad-11 hier VQ-VAE as the precision metric may not fully capture the gain.
+
+---
+
+### 29. Three-Level with Hyperbolic Top Codebook
+
+**Problem**: Item 21 fixed the hyperbolic top codebook collapse in the two-level model, reaching 70.14% val accuracy (vs 78.03% Euclidean top) with healthy utilisation (39.1% top-prior accuracy). The three-level model provides more abstraction levels; applying the fixed `HyperbolicVectorQuantizer` to the top branch (N/8 tokens, codebook 16) could give the global-branch level a geometry that better matches the p-adic tree structure — while the mid and bottom levels remain Euclidean for reconstruction quality.
+
+**Plan**: Modify `ThreeLevelVQVAE` to accept a `hyperbolic_top=True` flag, using `HyperbolicVectorQuantizer` (v2, with spread init + EMA + entropy reg) for the top branch. Train on Broad-11, N=128.
+
+**What to measure**: Val accuracy, top-prior accuracy (was 100% before fix, 39.1% after fix in 2-level), p=5 reconstruction accuracy.
+
+**Expected outcome**: Top-prior accuracy should remain healthy (below 60%) given the collapse fix. Val accuracy may be 1–3pp below all-Euclidean 3-level (79.29%).
+
+---
+
+### 30. Attention-Based Hierarchical Decoder
+
+**Problem**: The current hierarchical decoder uses Conv1d upsampling — it applies the top-level context uniformly to all mid positions and the mid context uniformly to all bot positions (via addition). This is a crude way to condition: a convolutional decoder can't selectively attend to specific top or mid codes based on what's being decoded at each position.
+
+**Plan**: Replace the Conv1d decoder stack with a lightweight Transformer decoder (2–4 attention layers, `d_model = hidden_dim`). At each decoding level:
+- Bottom-level decoder: cross-attends to mid codes and top codes as key/value
+- Final projection: same `dec_proj` → vocab logits
+
+This allows the decoder to selectively weight which mid code is most relevant for each of the N output positions, and which top code captures the relevant global branch.
+
+**Estimated scope**: Medium. Requires replacing 3 Conv stacks with a Transformer block. The encoder is unchanged — only the decoder changes.
+
+**Expected outcome**: +2–5pp val accuracy improvement over Conv decoder, particularly at high-branching primes where the digit patterns are more complex and local attention over the hierarchy would help.
+
+---
+
+### 31. Evaluation on Held-Out Algebraic Sequences Only
+
+**Problem**: All evaluations mix rational, algebraic, and random sequences in the test set. Random sequences have no p-adic structure (they're i.i.d. uniform), so they inflate reconstruction accuracy for any model that learns digit-frequency priors. Algebraic sequences (Hensel-lifted roots) are the most structurally challenging — they follow precise non-periodic patterns determined by the polynomial. A cleaner benchmark would evaluate only on algebraic sequences.
+
+**Plan**: Modify `eval_hyperbolic_hd256.py`, `eval_conditional_alignment.py`, and `eval_hierarchical_alignment.py` to filter to `seq_type == 1` (algebraic only). Report algebraic-only Spearman r and alignment loss alongside the mixed numbers.
+
+**Expected outcome**: Alignment scores will decrease (algebraic sequences are harder), but the relative ranking of models should stay the same. If the Euclidean model degrades more on algebraic sequences than the Hyperbolic model, this would strengthen the case for hyperbolic geometry.
+
+**Estimated scope**: Small. Just a filter change in existing eval scripts, no training.
