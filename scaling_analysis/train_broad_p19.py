@@ -112,74 +112,31 @@ def main():
     torch.save(beta_vae_new.state_dict(), beta_vae_new_path)
     
     # -------------------------------------------------------------
-    # 3. Load Pre-trained Models
+    # 3. Evaluate newly trained Broad-19 hd=256 on target primes [2, 5]
+    # (Old Restricted/Broad-11/13/17 checkpoints used the legacy categorical
+    #  prime_emb and are architecture-incompatible with the current PrimeEmbedder.
+    #  Their numbers are documented in the README from the original scaling runs.)
     # -------------------------------------------------------------
-    print("\n--- [Step 5] Loading Pre-trained Models ---")
-    # A. Restricted [2, 5]
-    vqvae_r = ConditionalVQVAE(vocab_size=13, hidden_dim=64, codebook_size=64, latent_dim=32, N=N, cond_dim=16)
-    prior_r = PriorGRU(codebook_size=64, latent_dim=32, cond_dim=16, hidden_size=128, num_layers=2)
-    beta_vae_r = ConditionalBetaVAE(vocab_size=13, hidden_dim=64, latent_dim=32, N=N, cond_dim=16)
-    
-    vqvae_r.load_state_dict(torch.load('./checkpoints/restricted/vqvae.pt', map_location=device))
-    prior_r.load_state_dict(torch.load('./checkpoints/restricted/prior.pt', map_location=device))
-    beta_vae_r.load_state_dict(torch.load('./checkpoints/restricted/beta_vae_metric.pt', map_location=device))
-    
-    # B. Broad-11 [2, 3, 5, 7, 11]
-    vqvae_b11 = ConditionalVQVAE(vocab_size=13, hidden_dim=64, codebook_size=64, latent_dim=32, N=N, cond_dim=16)
-    prior_b11 = PriorGRU(codebook_size=64, latent_dim=32, cond_dim=16, hidden_size=128, num_layers=2)
-    beta_vae_b11 = ConditionalBetaVAE(vocab_size=13, hidden_dim=64, latent_dim=32, N=N, cond_dim=16)
-    
-    vqvae_b11.load_state_dict(torch.load('./checkpoints/vqvae.pt', map_location=device))
-    prior_b11.load_state_dict(torch.load('./checkpoints/prior.pt', map_location=device))
-    beta_vae_b11.load_state_dict(torch.load('./checkpoints/beta_vae_metric.pt', map_location=device))
-    
-    # C. Broad-13 [2, 3, 5, 7, 11, 13]
-    vqvae_b13 = ConditionalVQVAE(vocab_size=13, hidden_dim=64, codebook_size=64, latent_dim=32, N=N, cond_dim=16)
-    prior_b13 = PriorGRU(codebook_size=64, latent_dim=32, cond_dim=16, hidden_size=128, num_layers=2)
-    beta_vae_b13 = ConditionalBetaVAE(vocab_size=13, hidden_dim=64, latent_dim=32, N=N, cond_dim=16)
-    
-    vqvae_b13.load_state_dict(torch.load('./checkpoints/broad_p13/vqvae.pt', map_location=device))
-    prior_b13.load_state_dict(torch.load('./checkpoints/broad_p13/prior.pt', map_location=device))
-    beta_vae_b13.load_state_dict(torch.load('./checkpoints/broad_p13/beta_vae_metric.pt', map_location=device))
-    
-    # D. Broad-17 [2, 3, 5, 7, 11, 13, 17]
-    vqvae_b17 = ConditionalVQVAE(vocab_size=17, hidden_dim=64, codebook_size=64, latent_dim=32, N=N, cond_dim=16)
-    prior_b17 = PriorGRU(codebook_size=64, latent_dim=32, cond_dim=16, hidden_size=128, num_layers=2)
-    beta_vae_b17 = ConditionalBetaVAE(vocab_size=17, hidden_dim=64, latent_dim=32, N=N, cond_dim=16)
-    
-    vqvae_b17.load_state_dict(torch.load('./checkpoints/broad_p17/vqvae.pt', map_location=device))
-    prior_b17.load_state_dict(torch.load('./checkpoints/broad_p17/prior.pt', map_location=device))
-    beta_vae_b17.load_state_dict(torch.load('./checkpoints/broad_p17/beta_vae_metric.pt', map_location=device))
-    
-    # Set all models to eval
     model_configs = [
-        ('restricted', vqvae_r, beta_vae_r, prior_r),
-        ('broad_11', vqvae_b11, beta_vae_b11, prior_b11),
-        ('broad_13', vqvae_b13, beta_vae_b13, prior_b13),
-        ('broad_17', vqvae_b17, beta_vae_b17, prior_b17),
-        ('broad_19', vqvae_new, beta_vae_new, prior_new)
+        ('broad_19_hd256', vqvae_new, beta_vae_new, prior_new)
     ]
     for _, vqvae_m, beta_vae_m, prior_m in model_configs:
         vqvae_m.to(device).eval()
         beta_vae_m.to(device).eval()
         prior_m.to(device).eval()
-        
+
     # -------------------------------------------------------------
-    # 4. Comparative Evaluation on target primes [2, 5]
+    # 4. Evaluation on target primes [2, 5]
     # -------------------------------------------------------------
-    print("\n--- [Step 6] Running Five-Way Comparative Evaluation ---")
+    print("\n--- [Step 5] Evaluating Broad-19 hd=256 on p=2 and p=5 ---")
     eval_samples_per_prime = 200
     dataset_eval = PadicDataset(primes=[2, 5], N=N, num_samples_per_type=eval_samples_per_prime)
     eval_loader = DataLoader(dataset_eval, batch_size=batch_size, shuffle=False)
-    
+
     metrics = {
-        'restricted': {'vq_acc_p2': 0.0, 'vq_acc_p5': 0.0, 'vae_metric_p2': 0.0, 'vae_metric_p5': 0.0},
-        'broad_11': {'vq_acc_p2': 0.0, 'vq_acc_p5': 0.0, 'vae_metric_p2': 0.0, 'vae_metric_p5': 0.0},
-        'broad_13': {'vq_acc_p2': 0.0, 'vq_acc_p5': 0.0, 'vae_metric_p2': 0.0, 'vae_metric_p5': 0.0},
-        'broad_17': {'vq_acc_p2': 0.0, 'vq_acc_p5': 0.0, 'vae_metric_p2': 0.0, 'vae_metric_p5': 0.0},
-        'broad_19': {'vq_acc_p2': 0.0, 'vq_acc_p5': 0.0, 'vae_metric_p2': 0.0, 'vae_metric_p5': 0.0}
+        'broad_19_hd256': {'vq_acc_p2': 0.0, 'vq_acc_p5': 0.0, 'vae_metric_p2': 0.0, 'vae_metric_p5': 0.0}
     }
-    
+
     for model_name, vqvae_m, beta_vae_m, prior_m in model_configs:
         p2_vq_correct, p2_vq_total = 0, 0
         p5_vq_correct, p5_vq_total = 0, 0
@@ -238,85 +195,53 @@ def main():
     # -------------------------------------------------------------
     # 5. Save Results Report
     # -------------------------------------------------------------
+    m = metrics['broad_19_hd256']
+    print(f"\nBroad-19 hd=256 results on p=2/5:")
+    print(f"  VQ-VAE acc p=2:      {m['vq_acc_p2']*100:.2f}%")
+    print(f"  VQ-VAE acc p=5:      {m['vq_acc_p5']*100:.2f}%")
+    print(f"  Metric align p=2:    {m['vae_metric_p2']:.5f}")
+    print(f"  Metric align p=5:    {m['vae_metric_p5']:.5f}")
+
     report_path = './plots/comparison_p19/results_report_p19.md'
     with open(report_path, 'w') as f:
-        f.write("# Five-Way Comparison: Scaling Analysis up to p=19\n\n")
-        f.write("This report evaluates the scaling effects of multi-task regularization in conditional p-adic models across five configurations.\n\n")
-        f.write("## Evaluation Metrics Summary Table\n\n")
-        f.write("| Evaluation Metric | Restricted | Broad-11 | Broad-13 | Broad-17 | Broad-19 |\n")
-        f.write("| :--- | :---: | :---: | :---: | :---: | :---: |\n")
-        for k in sorted(metrics['restricted'].keys()):
-            f.write(f"| `{k}` | {metrics['restricted'][k]:.5f} | {metrics['broad_11'][k]:.5f} | {metrics['broad_13'][k]:.5f} | {metrics['broad_17'][k]:.5f} | {metrics['broad_19'][k]:.5f} |\n")
+        f.write("# Broad-19 hd=256 Evaluation\n\n")
+        f.write("| Metric | Broad-19 hd=256 |\n")
+        f.write("| :--- | :---: |\n")
+        for k in sorted(m.keys()):
+            f.write(f"| `{k}` | {m[k]:.5f} |\n")
+    print(f"Report saved to {report_path}")
 
-    print(f"Comparison report saved to {report_path}")
-    
     # -------------------------------------------------------------
-    # 6. Generate Plot: VQ-VAE Reconstruction Accuracy scaling
+    # 6. Generate Plot: Latent Space PCA (Broad-19 hd=256)
     # -------------------------------------------------------------
-    plt.figure(figsize=(12, 6), dpi=150)
-    labels = ['2-adic digits', '5-adic digits']
-    x = np.arange(len(labels))
-    width = 0.15
-    
-    plt.bar(x - 2*width, [metrics['restricted']['vq_acc_p2']*100, metrics['restricted']['vq_acc_p5']*100], width, label='Restricted [2, 5]', color='#ff9800')
-    plt.bar(x - width, [metrics['broad_11']['vq_acc_p2']*100, metrics['broad_11']['vq_acc_p5']*100], width, label='Broad-11 [2..11]', color='#2196f3')
-    plt.bar(x, [metrics['broad_13']['vq_acc_p2']*100, metrics['broad_13']['vq_acc_p5']*100], width, label='Broad-13 [2..13]', color='#00bcd4')
-    plt.bar(x + width, [metrics['broad_17']['vq_acc_p2']*100, metrics['broad_17']['vq_acc_p5']*100], width, label='Broad-17 [2..17]', color='#9c27b0')
-    plt.bar(x + 2*width, [metrics['broad_19']['vq_acc_p2']*100, metrics['broad_19']['vq_acc_p5']*100], width, label='Broad-19 [2..19] (New)', color='#4caf50')
-    
-    plt.ylabel('Digit Reconstruction Accuracy (%)', fontweight='bold')
-    plt.title('Reconstruction Performance Scaling across Prime Sets (up to p=19)', fontsize=12, fontweight='bold')
-    plt.xticks(x, labels, fontweight='bold')
-    plt.ylim(0, 105)
-    plt.grid(axis='y', linestyle=':', alpha=0.6)
-    plt.legend()
-    
-    plot_acc_path = './plots/comparison_p19/vqvae_accuracy_scaling.png'
-    plt.savefig(plot_acc_path, bbox_inches='tight')
-    plt.close()
-    
-    # -------------------------------------------------------------
-    # 7. Generate Plot: Latent Space PCA projections comparison (5 columns)
-    # -------------------------------------------------------------
-    print("Generating Latent Space PCA plots comparison...")
-    fig, axes = plt.subplots(2, 5, figsize=(30, 14), dpi=150)
-    
-    for row_idx, p in enumerate([2, 5]):
-        ds_p = PadicDataset(primes=[p], N=N, num_samples_per_type=200)
-        digits_list = []
-        p_list = []
-        residues = []
+    print("Generating Latent Space PCA plot...")
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6), dpi=150)
+    for col_idx, p_eval in enumerate([2, 5]):
+        ds_p = PadicDataset(primes=[p_eval], N=N, num_samples_per_type=200)
+        digits_list, p_list, residues = [], [], []
         for sample in ds_p:
             if sample['type'] != 2:
                 digits_list.append(sample['digits'])
                 p_list.append(sample['p'])
-                residues.append(sample['digits'][0].item() + sample['digits'][1].item() * p)
-                
+                residues.append(sample['digits'][0].item() + sample['digits'][1].item() * p_eval)
         digits_tensor = torch.stack(digits_list).to(device)
         p_tensor = torch.tensor(p_list, dtype=torch.long, device=device)
-        residues = np.array(residues)
-        
-        for col_idx, (model_name, _, beta_vae_m, _) in enumerate(model_configs):
-            with torch.no_grad():
-                mu, _ = beta_vae_m.encode(digits_tensor, p_tensor)
-                z = beta_vae_m.reparameterize(mu, torch.zeros_like(mu))
-            z_2d = project_pca(z.cpu(), 2).numpy()
-            
-            ax = axes[row_idx, col_idx]
-            sc = ax.scatter(z_2d[:, 0], z_2d[:, 1], c=residues, cmap='tab20', s=15, alpha=0.8)
-            ax.set_title(f"{model_name} ({p}-adic)\n(Metric Loss: {metrics[model_name][f'vae_metric_p{p}']:.5f})", fontsize=11, fontweight='bold')
-            ax.set_xlabel("PC 1")
-            ax.set_ylabel("PC 2")
-            ax.grid(True, alpha=0.3)
-            fig.colorbar(sc, ax=ax)
-            
-    plt.suptitle("Scaling Latent Space Topology\nRestricted vs. Broad-11 vs. Broad-13 vs. Broad-17 vs. Broad-19", fontsize=16, fontweight='bold')
+        with torch.no_grad():
+            mu, _ = beta_vae_new.encode(digits_tensor, p_tensor)
+            z = beta_vae_new.reparameterize(mu, torch.zeros_like(mu))
+        z_2d = project_pca(z.cpu(), 2).numpy()
+        ax = axes[col_idx]
+        sc = ax.scatter(z_2d[:, 0], z_2d[:, 1], c=np.array(residues), cmap='tab20', s=15, alpha=0.8)
+        ax.set_title(f"Broad-19 hd=256 ({p_eval}-adic)\nMetric Loss: {metrics['broad_19_hd256'][f'vae_metric_p{p_eval}']:.5f}", fontweight='bold')
+        ax.set_xlabel("PC 1"); ax.set_ylabel("PC 2"); ax.grid(True, alpha=0.3)
+        fig.colorbar(sc, ax=ax)
+    plt.suptitle("Latent Space PCA — Broad-19 hd=256", fontsize=14, fontweight='bold')
     plot_latent_path = './plots/comparison_p19/latent_space_scaling.png'
     plt.savefig(plot_latent_path, bbox_inches='tight')
     plt.close()
-    
+
     # -------------------------------------------------------------
-    # 8. Generate 19-adic tree and Poincaré Disk
+    # 7. Generate 19-adic tree and Poincaré Disk
     # -------------------------------------------------------------
     generate_tree_plot(
         vqvae_path=vqvae_new_path,
