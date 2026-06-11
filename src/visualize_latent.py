@@ -1,114 +1,168 @@
+import argparse
 import os
+import numpy as np
 import torch
 import matplotlib.pyplot as plt
-import numpy as np
+from matplotlib.lines import Line2D
+
 from dataset import PadicDataset
 from beta_vae import ConditionalBetaVAE
+from viz_style import (apply_style, RATIONAL_COLOR, ALGEBRAIC_COLOR,
+                       RANDOM_COLOR, seq_type_legend_handles)
+
+apply_style()
+
+# Marker style per sequence type: rational=circle, algebraic=triangle
+_TYPE_MARKER = {0: 'o', 1: '^', 2: 's'}
+_TYPE_COLOR  = {0: RATIONAL_COLOR, 1: ALGEBRAIC_COLOR, 2: RANDOM_COLOR}
+_TYPE_LABEL  = {0: 'Rational', 1: 'Algebraic', 2: 'Random'}
+
 
 def project_pca(z, num_components=2):
     """
-    Perform PCA projection on z using PyTorch SVD.
-    z: [B, D] tensor
-    Returns: [B, num_components] projected coordinates
+    PCA projection via torch SVD.
+
+    Parameters
+    ----------
+    z : [B, D] tensor
+    Returns : [B, num_components] projected coordinates
     """
     z_mean = torch.mean(z, dim=0, keepdim=True)
     z_centered = z - z_mean
-    # SVD: z_centered = U * diag(S) * Vh
-    U, S, Vh = torch.linalg.svd(z_centered, full_matrices=False)
-    # Project: z_projected = z_centered * Vh^T (first num_components vectors)
-    # Vh shape: [min(B, D), D], Vh.t() shape: [D, min(B, D)]
-    projected = torch.matmul(z_centered, Vh[:num_components].t())
-    return projected
+    _, _, Vh = torch.linalg.svd(z_centered, full_matrices=False)
+    return torch.matmul(z_centered, Vh[:num_components].t())
 
-def evaluate_and_plot_latents(unaligned_path, aligned_path, save_img_dir='./plots', N=64):
-    os.makedirs(save_img_dir, exist_ok=True)
-    
+
+def evaluate_and_plot_latents(
+    unaligned_path,
+    aligned_path,
+    save_dir='./plots',
+    N=64,
+    vocab_size=13,
+    hidden_dim=64,
+    latent_dim=32,
+    primes=None,
+    num_samples=150,
+):
+    """
+    PCA scatter comparison: unaligned vs metric-aligned Beta-VAE latent spaces.
+
+    Each subplot uses marker shape (○ rational, △ algebraic) and colour by
+    p-adic residue (a₀ + a₁·p) for fine-grained cluster structure.
+    """
+    if primes is None:
+        primes = [2, 3, 5, 7, 11]
+    os.makedirs(save_dir, exist_ok=True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    # 1. Load Models
-    model_unaligned = ConditionalBetaVAE(vocab_size=13, hidden_dim=64, latent_dim=32, N=N)
-    model_unaligned.load_state_dict(torch.load(unaligned_path, map_location=device))
-    model_unaligned.to(device)
-    model_unaligned.eval()
-    
-    model_aligned = ConditionalBetaVAE(vocab_size=13, hidden_dim=64, latent_dim=32, N=N)
-    model_aligned.load_state_dict(torch.load(aligned_path, map_location=device))
-    model_aligned.to(device)
-    model_aligned.eval()
-    
-    # Primes to analyze
-    primes_to_plot = [2, 3, 5, 7, 11]
-    
-    for p in primes_to_plot:
-        print(f"\nExtracting latents for {p}-adic numbers...")
-        # Generate 400 test samples of rationals and algebraic roots for this prime
-        ds = PadicDataset(primes=[p], N=N, num_samples_per_type=150)
-        
-        # Collect inputs
-        digits_list = []
-        p_list = []
-        residues = []  # To color-code: represent a_0 + a_1 * p (first 2 digits)
-        
+
+    def _load(path):
+        m = ConditionalBetaVAE(
+            vocab_size=vocab_size, hidden_dim=hidden_dim,
+            latent_dim=latent_dim, N=N,
+        )
+        m.load_state_dict(torch.load(path, map_location=device))
+        m.to(device).eval()
+        return m
+
+    model_unaligned = _load(unaligned_path)
+    model_aligned   = _load(aligned_path)
+
+    for p in primes:
+        print(f'  p={p} …', end=' ', flush=True)
+        ds = PadicDataset(primes=[p], N=N, num_samples_per_type=num_samples)
+
+        digits_list, types, residues = [], [], []
         for sample in ds:
-            # We exclude random noise for cleaner topological visualization
-            if sample['type'] != 2:
-                seq = sample['digits']
-                digits_list.append(seq)
-                p_list.append(sample['p'])
-                # Calculate first 2 digits residue: a_0 + a_1 * p
-                res = seq[0].item() + seq[1].item() * p
-                residues.append(res)
-                
-        digits_tensor = torch.stack(digits_list).to(device)
-        p_tensor = torch.tensor(p_list, dtype=torch.long, device=device)
+            if sample['type'] == 2:   # skip random noise for cleaner topology
+                continue
+            digits_list.append(sample['digits'])
+            types.append(sample['type'].item())
+            residues.append(sample['digits'][0].item() + sample['digits'][1].item() * p)
+
+        digits_t = torch.stack(digits_list).to(device)
+        p_t = torch.full((len(digits_list),), p, dtype=torch.long, device=device)
+        types = np.array(types)
         residues = np.array(residues)
-        
-        # Get Latent Representations
+
         with torch.no_grad():
-            # Unaligned
-            mu_un, logvar_un = model_unaligned.encode(digits_tensor, p_tensor)
-            z_un = model_unaligned.reparameterize(mu_un, logvar_un)
-            
-            # Aligned
-            mu_al, logvar_al = model_aligned.encode(digits_tensor, p_tensor)
-            z_al = model_aligned.reparameterize(mu_al, logvar_al)
-            
-        # Project to 2D
+            mu_un, lv_un = model_unaligned.encode(digits_t, p_t)
+            z_un = model_unaligned.reparameterize(mu_un, lv_un)
+
+            mu_al, lv_al = model_aligned.encode(digits_t, p_t)
+            z_al = model_aligned.reparameterize(mu_al, lv_al)
+
         z_un_2d = project_pca(z_un.cpu(), 2).numpy()
         z_al_2d = project_pca(z_al.cpu(), 2).numpy()
-        
-        # Create Plots
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7), dpi=150)
-        
-        # Plot 1: Unaligned Latent Space
-        scatter1 = ax1.scatter(
-            z_un_2d[:, 0], z_un_2d[:, 1],
-            c=residues, cmap='tab20', s=15, alpha=0.8
-        )
-        ax1.set_title(f"Standard Beta-VAE Latent Space\n(Posterior Collapse / Blurry Representation)")
-        ax1.set_xlabel("PC 1")
-        ax1.set_ylabel("PC 2")
-        ax1.grid(True, alpha=0.3)
-        
-        # Plot 2: Aligned Latent Space
-        scatter2 = ax2.scatter(
-            z_al_2d[:, 0], z_al_2d[:, 1],
-            c=residues, cmap='tab20', s=15, alpha=0.8
-        )
-        # Add colorbar to the second plot to show the residues
-        cbar = fig.colorbar(scatter2, ax=ax2, label=f"Residue modulo {p}^2")
-        ax2.set_title(f"Ultrametric Aligned Latent Space\n(Enforced d_latent ~ d_{p}-adic)")
-        ax2.set_xlabel("PC 1")
-        ax2.set_ylabel("PC 2")
-        ax2.grid(True, alpha=0.3)
-        
-        plt.suptitle(f"Latent Topology Mapping: {p}-adic Integers modulo {p}^2", fontsize=16, fontweight='bold')
-        
-        # Save Plot
-        plot_path = os.path.join(save_img_dir, f'latent_space_p{p}.png')
-        plt.savefig(plot_path, bbox_inches='tight')
-        plt.close()
-        print(f"Saved latent space topology plot to {plot_path}")
 
-if __name__ == "__main__":
-    evaluate_and_plot_latents('./checkpoints/beta_vae.pt', './checkpoints/beta_vae_metric.pt', N=64)
+        fig, (ax_un, ax_al) = plt.subplots(1, 2, figsize=(14, 6))
+        fig.suptitle(
+            f'Latent Space Topology — {p}-adic  (residue mod {p}²)',
+            fontsize=13, fontweight='bold',
+        )
+
+        for ax, z2d, title in [
+            (ax_un, z_un_2d, 'Standard Beta-VAE'),
+            (ax_al, z_al_2d, 'Metric-Aligned Beta-VAE'),
+        ]:
+            for seq_type in (0, 1):
+                mask = types == seq_type
+                if not mask.any():
+                    continue
+                sc = ax.scatter(
+                    z2d[mask, 0], z2d[mask, 1],
+                    c=residues[mask], cmap='tab20',
+                    marker=_TYPE_MARKER[seq_type],
+                    s=22, alpha=0.75,
+                    vmin=residues.min(), vmax=residues.max(),
+                )
+            ax.set_title(title)
+            ax.set_xlabel('PC 1')
+            ax.set_ylabel('PC 2')
+
+        # Shared colorbar on the right axis
+        cbar = fig.colorbar(sc, ax=ax_al, label=f'a₀ + a₁·{p}')
+        cbar.ax.tick_params(labelsize=8)
+
+        # Type legend
+        legend_handles = [
+            Line2D([0], [0], marker=_TYPE_MARKER[t], color='grey',
+                   markersize=7, linestyle='None', label=_TYPE_LABEL[t])
+            for t in (0, 1)
+        ]
+        ax_al.legend(handles=legend_handles, loc='upper right')
+
+        plot_path = os.path.join(save_dir, f'latent_space_p{p}.png')
+        plt.savefig(plot_path)
+        plt.close()
+        print(f'saved → {plot_path}')
+
+
+# ── Standalone entry point ────────────────────────────────────────────────────
+
+def _parse_args():
+    p = argparse.ArgumentParser(description='Latent space visualization')
+    p.add_argument('--unaligned_path', default='./checkpoints/beta_vae.pt')
+    p.add_argument('--aligned_path',   default='./checkpoints/beta_vae_metric.pt')
+    p.add_argument('--primes', nargs='+', type=int, default=[2, 3, 5, 7, 11])
+    p.add_argument('--N',           type=int, default=64)
+    p.add_argument('--vocab_size',  type=int, default=13)
+    p.add_argument('--hidden_dim',  type=int, default=64)
+    p.add_argument('--latent_dim',  type=int, default=32)
+    p.add_argument('--num_samples', type=int, default=150)
+    p.add_argument('--save_dir',    default='./plots')
+    return p.parse_args()
+
+
+if __name__ == '__main__':
+    args = _parse_args()
+    evaluate_and_plot_latents(
+        unaligned_path=args.unaligned_path,
+        aligned_path=args.aligned_path,
+        save_dir=args.save_dir,
+        N=args.N,
+        vocab_size=args.vocab_size,
+        hidden_dim=args.hidden_dim,
+        latent_dim=args.latent_dim,
+        primes=args.primes,
+        num_samples=args.num_samples,
+    )

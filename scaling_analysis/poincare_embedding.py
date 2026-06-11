@@ -6,6 +6,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from models import ConditionalVQVAE, PriorGRU
 from dataset import PadicDataset
+from viz_style import (apply_style, RATIONAL_COLOR, ALGEBRAIC_COLOR,
+                       GENERATED_COLOR, seq_type_legend_handles)
+
+apply_style()
 
 def get_poincare_coords(digits, p, max_depth=16, c=0.25):
     """
@@ -109,30 +113,27 @@ def generate_poincare_disk(vqvae_path, prior_path, p, vocab_size, N=64, save_pat
     c_factor = 0.3
     plot_background_tree([], 0, 0.0, 2 * math.pi)
     
-    # Plot real rationals in blue (converging periodically to the boundary)
     for seq in real_rats[:10]:
         x, y = get_poincare_coords(seq, p, max_depth=16, c=c_factor)
-        ax.plot(x, y, color='dodgerblue', alpha=0.6, linewidth=1.5, zorder=2)
-        ax.scatter(x[-1], y[-1], color='blue', s=15, alpha=0.7, zorder=3)
-        
-    # Plot real algebraic roots in red
+        ax.plot(x, y, color=RATIONAL_COLOR, alpha=0.6, linewidth=1.4, zorder=2)
+        ax.scatter(x[-1], y[-1], color=RATIONAL_COLOR, s=16, alpha=0.8, zorder=3)
+
     for seq in real_algs[:10]:
         x, y = get_poincare_coords(seq, p, max_depth=16, c=c_factor)
-        ax.plot(x, y, color='crimson', alpha=0.6, linewidth=1.5, zorder=2)
-        ax.scatter(x[-1], y[-1], color='red', s=15, alpha=0.7, zorder=3)
-        
-    # Plot generated sequences in green
+        ax.plot(x, y, color=ALGEBRAIC_COLOR, alpha=0.6, linewidth=1.4, zorder=2)
+        ax.scatter(x[-1], y[-1], color=ALGEBRAIC_COLOR, s=16, alpha=0.8, zorder=3)
+
     for seq in generated_digits[:15]:
         x, y = get_poincare_coords(seq.tolist(), p, max_depth=16, c=c_factor)
-        ax.plot(x, y, color='limegreen', alpha=0.7, linewidth=1.2, zorder=4)
-        ax.scatter(x[-1], y[-1], color='darkgreen', s=15, alpha=0.8, zorder=5)
-        
+        ax.plot(x, y, color=GENERATED_COLOR, alpha=0.7, linewidth=1.2, zorder=4)
+        ax.scatter(x[-1], y[-1], color=GENERATED_COLOR, s=16, alpha=0.85, zorder=5)
+
     ax.set_xlim(-1.05, 1.05)
     ax.set_ylim(-1.05, 1.05)
     ax.set_aspect('equal')
     ax.axis('off')
-    
-    ax.set_title(f"Poincaré Disk Hyperbolic Embedding ({p}-adic Space)\nBlue = Rational, Red = Algebraic, Green = VQ-VAE Generated", fontsize=14, fontweight='bold')
+    ax.legend(handles=seq_type_legend_handles(), loc='lower right', fontsize=9)
+    ax.set_title(f'Poincaré Disk — {p}-adic Space', fontweight='bold')
     
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.savefig(save_path, bbox_inches='tight')
