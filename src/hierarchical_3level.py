@@ -43,7 +43,8 @@ from models import VectorQuantizer, ResidualBlock, PrimeEmbedder
 class ThreeLevelVQVAE(nn.Module):
     def __init__(self, vocab_size=13, hidden_dim=64, N=128,
                  bot_codebook=64, mid_codebook=32, top_codebook=16,
-                 bot_dim=32, mid_dim=32, top_dim=32, cond_dim=16):
+                 bot_dim=32, mid_dim=32, top_dim=32, cond_dim=16,
+                 use_attention_decoder=False):
         super().__init__()
         assert N % 8 == 0, 'N must be divisible by 8'
         self.vocab_size = vocab_size
@@ -83,23 +84,42 @@ class ThreeLevelVQVAE(nn.Module):
         self.top_quantizer   = VectorQuantizer(top_codebook, top_dim)
 
         # ── decoder ───────────────────────────────────────────────────────
-        # top N/8 → N/4
-        self.dec_top_up   = nn.ConvTranspose1d(top_dim, hidden_dim, 3, stride=2,
-                                               padding=1, output_padding=1)
-        # mid context
-        self.dec_mid_proj = nn.Conv1d(mid_dim, hidden_dim, 1)
-        self.dec_res_mid  = ResidualBlock(hidden_dim)
-        # N/4 → N/2
-        self.dec_mid_up   = nn.ConvTranspose1d(hidden_dim, hidden_dim, 3, stride=2,
-                                               padding=1, output_padding=1)
-        # bot context
-        self.dec_bot_proj = nn.Conv1d(bot_dim, hidden_dim, 1)
-        self.dec_res_bot  = ResidualBlock(hidden_dim)
-        # N/2 → N
-        self.dec_bot_up   = nn.ConvTranspose1d(hidden_dim, hidden_dim, 3, stride=2,
-                                               padding=1, output_padding=1)
-        self.dec_res_out  = ResidualBlock(hidden_dim)
-        self.dec_proj     = nn.Linear(hidden_dim, vocab_size)
+        self.use_attention_decoder = use_attention_decoder
+        if use_attention_decoder:
+            self.dec_queries = nn.Parameter(torch.zeros(1, N, hidden_dim))
+            nn.init.normal_(self.dec_queries, mean=0.0, std=0.02)
+            self.dec_top_proj_attn = nn.Linear(top_dim, hidden_dim)
+            self.dec_mid_proj_attn = nn.Linear(mid_dim, hidden_dim)
+            self.dec_bot_proj_attn = nn.Linear(bot_dim, hidden_dim)
+            
+            decoder_layer = nn.TransformerDecoderLayer(
+                d_model=hidden_dim,
+                nhead=4,
+                dim_feedforward=hidden_dim * 4,
+                dropout=0.1,
+                activation='relu',
+                batch_first=True
+            )
+            self.trans_decoder = nn.TransformerDecoder(decoder_layer, num_layers=3)
+            self.dec_proj = nn.Linear(hidden_dim, vocab_size)
+        else:
+            # top N/8 → N/4
+            self.dec_top_up   = nn.ConvTranspose1d(top_dim, hidden_dim, 3, stride=2,
+                                                   padding=1, output_padding=1)
+            # mid context
+            self.dec_mid_proj = nn.Conv1d(mid_dim, hidden_dim, 1)
+            self.dec_res_mid  = ResidualBlock(hidden_dim)
+            # N/4 → N/2
+            self.dec_mid_up   = nn.ConvTranspose1d(hidden_dim, hidden_dim, 3, stride=2,
+                                                   padding=1, output_padding=1)
+            # bot context
+            self.dec_bot_proj = nn.Conv1d(bot_dim, hidden_dim, 1)
+            self.dec_res_bot  = ResidualBlock(hidden_dim)
+            # N/2 → N
+            self.dec_bot_up   = nn.ConvTranspose1d(hidden_dim, hidden_dim, 3, stride=2,
+                                                   padding=1, output_padding=1)
+            self.dec_res_out  = ResidualBlock(hidden_dim)
+            self.dec_proj     = nn.Linear(hidden_dim, vocab_size)
 
     def encode(self, digits, p):
         B = digits.shape[0]
@@ -129,19 +149,33 @@ class ThreeLevelVQVAE(nn.Module):
         return z_q_bot, z_q_mid, z_q_top, idx_bot, idx_mid, idx_top, vq_loss
 
     def decode(self, z_q_bot, z_q_mid, z_q_top, p):
-        # top → N/4
-        h = F.relu(self.dec_top_up(z_q_top.transpose(1, 2)))
-        h = F.relu(h + self.dec_mid_proj(z_q_mid.transpose(1, 2)))
-        h = self.dec_res_mid(h)
-        # → N/2
-        h = F.relu(self.dec_mid_up(h))
-        h = F.relu(h + self.dec_bot_proj(z_q_bot.transpose(1, 2)))
-        h = self.dec_res_bot(h)
-        # → N
-        h = F.relu(self.dec_bot_up(h))
-        h = self.dec_res_out(h).transpose(1, 2)
-        h = h + self.cond_proj(self.prime_emb(p)).unsqueeze(1)
-        logits = self.dec_proj(h)
+        if self.use_attention_decoder:
+            B = z_q_bot.shape[0]
+            top_feats = self.dec_top_proj_attn(z_q_top)  # [B, L_top, H]
+            mid_feats = self.dec_mid_proj_attn(z_q_mid)  # [B, L_mid, H]
+            bot_feats = self.dec_bot_proj_attn(z_q_bot)  # [B, L_bot, H]
+            memory = torch.cat([top_feats, mid_feats, bot_feats], dim=1)  # [B, L_top + L_mid + L_bot, H]
+            
+            cond = self.cond_proj(self.prime_emb(p)).unsqueeze(1)
+            queries = self.dec_queries.expand(B, -1, -1) + cond
+            
+            h = self.trans_decoder(queries, memory)
+            logits = self.dec_proj(h)
+        else:
+            # top → N/4
+            h = F.relu(self.dec_top_up(z_q_top.transpose(1, 2)))
+            h = F.relu(h + self.dec_mid_proj(z_q_mid.transpose(1, 2)))
+            h = self.dec_res_mid(h)
+            # → N/2
+            h = F.relu(self.dec_mid_up(h))
+            h = F.relu(h + self.dec_bot_proj(z_q_bot.transpose(1, 2)))
+            h = self.dec_res_bot(h)
+            # → N
+            h = F.relu(self.dec_bot_up(h))
+            h = self.dec_res_out(h).transpose(1, 2)
+            h = h + self.cond_proj(self.prime_emb(p)).unsqueeze(1)
+            logits = self.dec_proj(h)
+
         mask = (torch.arange(self.vocab_size, device=logits.device)
                 .unsqueeze(0).unsqueeze(0) >= p.unsqueeze(1).unsqueeze(2))
         return logits.masked_fill(mask, -1e9)

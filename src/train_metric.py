@@ -116,7 +116,7 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
     
     # 2. Model
-    model = ConditionalBetaVAE(vocab_size=13, hidden_dim=64, latent_dim=32, N=args.N)
+    model = ConditionalBetaVAE(vocab_size=max(args.primes) + 2, hidden_dim=64, latent_dim=32, N=args.N)
     
     # 3. Train
     model = train_beta_vae_metric(model, train_loader, val_loader, args.epochs, args.lr, args.beta, args.gamma, device)

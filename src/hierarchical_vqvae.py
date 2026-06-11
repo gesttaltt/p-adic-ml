@@ -134,7 +134,8 @@ class HierarchicalVQVAE(nn.Module):
     def __init__(self, vocab_size=13, hidden_dim=64, N=64,
                  bot_codebook=64, top_codebook=16,
                  bot_dim=32, top_dim=32, cond_dim=16,
-                 hyperbolic_top=False, top_curvature=1.0):
+                 hyperbolic_top=False, top_curvature=1.0,
+                 use_attention_decoder=False):
         super().__init__()
         self.vocab_size  = vocab_size
         self.hidden_dim  = hidden_dim
@@ -172,17 +173,35 @@ class HierarchicalVQVAE(nn.Module):
             self.top_quantizer = VectorQuantizer(top_codebook, top_dim)
 
         # ── decoder ───────────────────────────────────────────────────────
-        # top upsample: N/4 → N/2
-        self.dec_top_up   = nn.ConvTranspose1d(top_dim, hidden_dim, kernel_size=3,
-                                               stride=2, padding=1, output_padding=1)
-        # combine top context + bottom codes
-        self.dec_bot_proj = nn.Conv1d(bot_dim, hidden_dim, kernel_size=1)
-        self.dec_res1     = ResidualBlock(hidden_dim)
-        # N/2 → N
-        self.dec_deconv   = nn.ConvTranspose1d(hidden_dim, hidden_dim, kernel_size=3,
-                                               stride=2, padding=1, output_padding=1)
-        self.dec_res2     = ResidualBlock(hidden_dim)
-        self.dec_proj     = nn.Linear(hidden_dim, vocab_size)
+        self.use_attention_decoder = use_attention_decoder
+        if use_attention_decoder:
+            self.dec_queries = nn.Parameter(torch.zeros(1, N, hidden_dim))
+            nn.init.normal_(self.dec_queries, mean=0.0, std=0.02)
+            self.dec_top_proj_attn = nn.Linear(top_dim, hidden_dim)
+            self.dec_bot_proj_attn = nn.Linear(bot_dim, hidden_dim)
+            
+            decoder_layer = nn.TransformerDecoderLayer(
+                d_model=hidden_dim,
+                nhead=4,
+                dim_feedforward=hidden_dim * 4,
+                dropout=0.1,
+                activation='relu',
+                batch_first=True
+            )
+            self.trans_decoder = nn.TransformerDecoder(decoder_layer, num_layers=3)
+            self.dec_proj = nn.Linear(hidden_dim, vocab_size)
+        else:
+            # top upsample: N/4 → N/2
+            self.dec_top_up   = nn.ConvTranspose1d(top_dim, hidden_dim, kernel_size=3,
+                                                   stride=2, padding=1, output_padding=1)
+            # combine top context + bottom codes
+            self.dec_bot_proj = nn.Conv1d(bot_dim, hidden_dim, kernel_size=1)
+            self.dec_res1     = ResidualBlock(hidden_dim)
+            # N/2 → N
+            self.dec_deconv   = nn.ConvTranspose1d(hidden_dim, hidden_dim, kernel_size=3,
+                                                   stride=2, padding=1, output_padding=1)
+            self.dec_res2     = ResidualBlock(hidden_dim)
+            self.dec_proj     = nn.Linear(hidden_dim, vocab_size)
 
     # ── encoder ───────────────────────────────────────────────────────────
 
@@ -223,28 +242,40 @@ class HierarchicalVQVAE(nn.Module):
         z_q_bot : [B, L_bot, bot_dim]
         z_q_top : [B, L_top, top_dim]  — on Poincaré ball if hyperbolic_top, else Euclidean
         """
-        # if top codes live on the manifold, map back to tangent space before ConvTranspose
+        # if top codes live on the manifold, map back to tangent space before ConvTranspose/projection
         if self.hyperbolic_top:
             z_q_top = self.top_quantizer.manifold.logmap0(z_q_top)
 
-        # upsample top → N/2
-        top_ctx = F.relu(self.dec_top_up(z_q_top.transpose(1, 2)))  # [B, H, N/2]
+        if self.use_attention_decoder:
+            B = z_q_bot.shape[0]
+            top_feats = self.dec_top_proj_attn(z_q_top)  # [B, L_top, H]
+            bot_feats = self.dec_bot_proj_attn(z_q_bot)  # [B, L_bot, H]
+            memory = torch.cat([top_feats, bot_feats], dim=1)  # [B, L_top + L_bot, H]
+            
+            cond = self.cond_proj(self.prime_emb(p)).unsqueeze(1)  # [B, 1, H]
+            queries = self.dec_queries.expand(B, -1, -1) + cond  # [B, N, H]
+            
+            h = self.trans_decoder(queries, memory)  # [B, N, H]
+            logits = self.dec_proj(h)  # [B, N, vocab_size]
+        else:
+            # upsample top → N/2
+            top_ctx = F.relu(self.dec_top_up(z_q_top.transpose(1, 2)))  # [B, H, N/2]
 
-        # project bottom + add top context
-        bot_h = self.dec_bot_proj(z_q_bot.transpose(1, 2))          # [B, H, N/2]
-        h = F.relu(bot_h + top_ctx)
-        h = self.dec_res1(h)
+            # project bottom + add top context
+            bot_h = self.dec_bot_proj(z_q_bot.transpose(1, 2))          # [B, H, N/2]
+            h = F.relu(bot_h + top_ctx)
+            h = self.dec_res1(h)
 
-        # upsample to N
-        h = F.relu(self.dec_deconv(h))                               # [B, H, N]
-        h = self.dec_res2(h)
-        h = h.transpose(1, 2)                                        # [B, N, H]
+            # upsample to N
+            h = F.relu(self.dec_deconv(h))                               # [B, H, N]
+            h = self.dec_res2(h)
+            h = h.transpose(1, 2)                                        # [B, N, H]
 
-        # prime conditioning in decoder
-        cond = self.cond_proj(self.prime_emb(p)).unsqueeze(1)
-        h = h + cond
+            # prime conditioning in decoder
+            cond = self.cond_proj(self.prime_emb(p)).unsqueeze(1)
+            h = h + cond
 
-        logits = self.dec_proj(h)                                    # [B, N, vocab_size]
+            logits = self.dec_proj(h)                                    # [B, N, vocab_size]
 
         # mask invalid digits
         mask = (torch.arange(self.vocab_size, device=logits.device)

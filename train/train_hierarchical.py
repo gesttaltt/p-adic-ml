@@ -27,6 +27,7 @@ from torch.utils.data import DataLoader, TensorDataset, random_split
 
 from dataset import PadicDataset
 from hierarchical_vqvae import HierarchicalVQVAE, TopPriorGRU, BotPriorGRU
+from metric_alignment import compute_metric_loss
 
 
 # ── Stage 1: VQ-VAE ───────────────────────────────────────────────────────────
@@ -241,6 +242,8 @@ def main():
     parser.add_argument('--hyperbolic_top',   action='store_true',
                         help='Use Poincaré-ball top codebook instead of Euclidean')
     parser.add_argument('--top_curvature',    type=float, default=1.0)
+    parser.add_argument('--attention_decoder', action='store_true',
+                        help='Use attention-based (Transformer) decoder instead of Conv1d upsampling')
     parser.add_argument('--save_dir',         type=str,  default='./checkpoints/hierarchical')
     args = parser.parse_args()
 
@@ -280,6 +283,7 @@ def main():
         top_dim         = args.top_dim,
         hyperbolic_top  = args.hyperbolic_top,
         top_curvature   = args.top_curvature,
+        use_attention_decoder = args.attention_decoder,
     )
     n_params = sum(p.numel() for p in vqvae.parameters())
     print(f'Parameters: {n_params:,}')

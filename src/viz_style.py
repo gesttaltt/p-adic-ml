@@ -29,7 +29,7 @@ def apply_style() -> None:
         'figure.facecolor':    'white',
         'axes.facecolor':      '#fafafa',
         'axes.grid':           True,
-        'axes.grid.alpha':     0.35,
+        'grid.color':          '#e6e6e6',
         'axes.spines.top':     False,
         'axes.spines.right':   False,
         'font.family':         'sans-serif',

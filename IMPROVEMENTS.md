@@ -353,17 +353,16 @@ Three levels compound with broad training: +2.76pp p=5 over 2-level Broad-23, +2
 
 ---
 
-### 30. Attention-Based Hierarchical Decoder
+### 30. Attention-Based Hierarchical Decoder ✅
 
 **Problem**: The current hierarchical decoder uses Conv1d upsampling — it applies the top-level context uniformly to all mid positions and the mid context uniformly to all bot positions (via addition). This is a crude way to condition: a convolutional decoder can't selectively attend to specific top or mid codes based on what's being decoded at each position.
 
-**Plan**: Replace the Conv1d decoder stack with a lightweight Transformer decoder (2–4 attention layers, `d_model = hidden_dim`). At each decoding level:
-- Bottom-level decoder: cross-attends to mid codes and top codes as key/value
-- Final projection: same `dec_proj` → vocab logits
+**Change**: Added a `use_attention_decoder` flag to both `HierarchicalVQVAE` and `ThreeLevelVQVAE`. When set to True, the ConvTranspose1d upsampling layers are replaced by a lightweight Transformer decoder stack (`nn.TransformerDecoder` with `nn.TransformerDecoderLayer`). At decoding time:
+- The top, mid, and bottom latent codes are projected to `hidden_dim` and concatenated along the sequence length dimension to act as the key/value "memory" context.
+- A set of learnable query embeddings of length $N$ is expanded, added to the prime embedding condition, and passed as queries to the Transformer decoder.
+- The Transformer decoder cross-attends to the multi-scale quantized context.
 
-This allows the decoder to selectively weight which mid code is most relevant for each of the N output positions, and which top code captures the relevant global branch.
-
-**Estimated scope**: Medium. Requires replacing 3 Conv stacks with a Transformer block. The encoder is unchanged — only the decoder changes.
+**Files**: `hierarchical_vqvae.py`, `hierarchical_3level.py`, `train_hierarchical.py`, `train_hierarchical_3level.py`, `test_pipeline.py`.
 
 **Expected outcome**: +2–5pp val accuracy improvement over Conv decoder, particularly at high-branching primes where the digit patterns are more complex and local attention over the hierarchy would help.
 

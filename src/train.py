@@ -176,7 +176,7 @@ def main():
     
     # 2. VQ-VAE
     vqvae = ConditionalVQVAE(
-        vocab_size=13, # up to prime 11/13
+        vocab_size=max(args.primes) + 2,
         hidden_dim=args.hidden_dim,
         codebook_size=args.codebook_size,
         latent_dim=args.latent_dim,

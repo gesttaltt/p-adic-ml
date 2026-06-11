@@ -152,6 +152,8 @@ def main():
     parser.add_argument('--bot_codebook',     type=int,   default=64)
     parser.add_argument('--mid_codebook',     type=int,   default=32)
     parser.add_argument('--top_codebook',     type=int,   default=16)
+    parser.add_argument('--attention_decoder', action='store_true',
+                        help='Use attention-based (Transformer) decoder instead of Conv1d upsampling')
     parser.add_argument('--save_dir',         type=str,   default='./checkpoints/hierarchical_3level')
     args = parser.parse_args()
 
@@ -173,7 +175,8 @@ def main():
     # Stage 1
     model = ThreeLevelVQVAE(vocab_size=vocab, hidden_dim=args.hidden_dim, N=args.N,
                              bot_codebook=args.bot_codebook, mid_codebook=args.mid_codebook,
-                             top_codebook=args.top_codebook)
+                             top_codebook=args.top_codebook,
+                             use_attention_decoder=args.attention_decoder)
     print(f'Parameters: {sum(p.numel() for p in model.parameters()):,}')
     model = train_vqvae(model, train_loader, val_loader, args.vqvae_epochs, args.lr, device)
     torch.save(model.state_dict(), f'{args.save_dir}/vqvae.pt')

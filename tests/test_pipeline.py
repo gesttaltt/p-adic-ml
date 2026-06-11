@@ -10,6 +10,8 @@ from metric_alignment import batch_padic_distance, compute_metric_loss, compute_
 from models import PrimeEmbedder, VectorQuantizer, ConditionalVQVAE, PriorGRU
 from beta_vae import ConditionalBetaVAE
 from hyperbolic_vae import HyperbolicBetaVAE
+from hierarchical_vqvae import HierarchicalVQVAE
+from hierarchical_3level import ThreeLevelVQVAE
 
 
 class TestPadicMath(unittest.TestCase):
@@ -187,6 +189,62 @@ class TestModels(unittest.TestCase):
 
         samples = model.sample(p)
         self.assertEqual(samples.shape, (4, N))
+
+    def test_hierarchical_vqvae_attention(self):
+        vocab_size = 13
+        N = 32
+        # Test default (conv decoder)
+        model_conv = HierarchicalVQVAE(vocab_size=vocab_size, hidden_dim=32, N=N,
+                                       bot_dim=16, top_dim=16, cond_dim=8,
+                                       use_attention_decoder=False)
+        # Test attention decoder
+        model_attn = HierarchicalVQVAE(vocab_size=vocab_size, hidden_dim=32, N=N,
+                                       bot_dim=16, top_dim=16, cond_dim=8,
+                                       use_attention_decoder=True)
+        
+        digits = torch.randint(0, 2, (4, N))
+        p = torch.tensor([2, 2, 2, 2], dtype=torch.long)
+        
+        logits_conv, loss_conv, idx_bot_conv, idx_top_conv = model_conv(digits, p)
+        logits_attn, loss_attn, idx_bot_attn, idx_top_attn = model_attn(digits, p)
+        
+        self.assertEqual(logits_conv.shape, (4, N, vocab_size))
+        self.assertEqual(logits_attn.shape, (4, N, vocab_size))
+        self.assertEqual(idx_bot_conv.shape, (4, N // 2))
+        self.assertEqual(idx_bot_attn.shape, (4, N // 2))
+        self.assertEqual(idx_top_conv.shape, (4, N // 4))
+        self.assertEqual(idx_top_attn.shape, (4, N // 4))
+        self.assertTrue(loss_conv.item() >= 0.0)
+        self.assertTrue(loss_attn.item() >= 0.0)
+
+    def test_three_level_vqvae_attention(self):
+        vocab_size = 13
+        N = 32
+        # Test default (conv decoder)
+        model_conv = ThreeLevelVQVAE(vocab_size=vocab_size, hidden_dim=32, N=N,
+                                     bot_dim=16, mid_dim=16, top_dim=16, cond_dim=8,
+                                     use_attention_decoder=False)
+        # Test attention decoder
+        model_attn = ThreeLevelVQVAE(vocab_size=vocab_size, hidden_dim=32, N=N,
+                                     bot_dim=16, mid_dim=16, top_dim=16, cond_dim=8,
+                                     use_attention_decoder=True)
+        
+        digits = torch.randint(0, 2, (4, N))
+        p = torch.tensor([2, 2, 2, 2], dtype=torch.long)
+        
+        logits_conv, loss_conv, idx_bot_conv, idx_mid_conv, idx_top_conv = model_conv(digits, p)
+        logits_attn, loss_attn, idx_bot_attn, idx_mid_attn, idx_top_attn = model_attn(digits, p)
+        
+        self.assertEqual(logits_conv.shape, (4, N, vocab_size))
+        self.assertEqual(logits_attn.shape, (4, N, vocab_size))
+        self.assertEqual(idx_bot_conv.shape, (4, N // 2))
+        self.assertEqual(idx_bot_attn.shape, (4, N // 2))
+        self.assertEqual(idx_mid_conv.shape, (4, N // 4))
+        self.assertEqual(idx_mid_attn.shape, (4, N // 4))
+        self.assertEqual(idx_top_conv.shape, (4, N // 8))
+        self.assertEqual(idx_top_attn.shape, (4, N // 8))
+        self.assertTrue(loss_conv.item() >= 0.0)
+        self.assertTrue(loss_attn.item() >= 0.0)
 
 
 if __name__ == '__main__':

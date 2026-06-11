@@ -6,6 +6,9 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 
 from models import ConditionalVQVAE, PriorGRU
+from hierarchical_vqvae import HierarchicalVQVAE, TopPriorGRU, BotPriorGRU
+from hierarchical_3level import (ThreeLevelVQVAE, ThreeLevelTopPriorGRU,
+                                 ThreeLevelMidPriorGRU, ThreeLevelBotPriorGRU)
 from dataset import PadicDataset
 from padic_math import padic_to_float
 from viz_style import (apply_style, RATIONAL_COLOR, ALGEBRAIC_COLOR,
@@ -77,6 +80,10 @@ def plot_padic_tree(
     max_depth=8,
     num_generate=50,
     verbose=True,
+    model_type='flat',
+    hyperbolic_top=False,
+    top_curvature=1.0,
+    use_attention_decoder=False,
 ):
     """
     Generate and save a single p-adic tree visualization.
@@ -94,16 +101,74 @@ def plot_padic_tree(
         os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
 
     # ── Load models ──────────────────────────────────────────────────────────
-    vqvae = ConditionalVQVAE(
-        vocab_size=vocab_size, hidden_dim=hidden_dim,
-        codebook_size=codebook_size, latent_dim=latent_dim, N=N,
-    )
-    vqvae.load_state_dict(torch.load(vqvae_path, map_location=device))
-    vqvae.to(device).eval()
+    if model_type == 'flat':
+        vqvae = ConditionalVQVAE(
+            vocab_size=vocab_size, hidden_dim=hidden_dim,
+            codebook_size=codebook_size, latent_dim=latent_dim, N=N,
+        )
+        vqvae.load_state_dict(torch.load(vqvae_path, map_location=device))
+        vqvae.to(device).eval()
 
-    prior = PriorGRU(codebook_size=codebook_size, latent_dim=latent_dim, cond_dim=16)
-    prior.load_state_dict(torch.load(prior_path, map_location=device))
-    prior.to(device).eval()
+        prior = PriorGRU(codebook_size=codebook_size, latent_dim=latent_dim, cond_dim=16)
+        prior.load_state_dict(torch.load(prior_path, map_location=device))
+        prior.to(device).eval()
+    elif model_type == 'hierarchical':
+        vqvae = HierarchicalVQVAE(
+            vocab_size=vocab_size, hidden_dim=hidden_dim, N=N,
+            bot_codebook=codebook_size, top_codebook=16,
+            bot_dim=latent_dim, top_dim=latent_dim, cond_dim=16,
+            hyperbolic_top=hyperbolic_top, top_curvature=top_curvature,
+            use_attention_decoder=use_attention_decoder
+        )
+        vqvae.load_state_dict(torch.load(vqvae_path, map_location=device))
+        vqvae.to(device).eval()
+
+        if os.path.isdir(prior_path):
+            top_p_path = os.path.join(prior_path, 'top_prior.pt')
+            bot_p_path = os.path.join(prior_path, 'bot_prior.pt')
+        else:
+            dir_name = os.path.dirname(prior_path)
+            top_p_path = os.path.join(dir_name, 'top_prior.pt')
+            bot_p_path = os.path.join(dir_name, 'bot_prior.pt')
+
+        top_prior = TopPriorGRU(top_codebook=16, top_dim=latent_dim, cond_dim=16, hidden_size=128, num_layers=2)
+        top_prior.load_state_dict(torch.load(top_p_path, map_location=device))
+        top_prior.to(device).eval()
+
+        bot_prior = BotPriorGRU(bot_codebook=codebook_size, top_codebook=16, bot_dim=latent_dim, top_dim=latent_dim, cond_dim=16, hidden_size=256, num_layers=2)
+        bot_prior.load_state_dict(torch.load(bot_p_path, map_location=device))
+        bot_prior.to(device).eval()
+    elif model_type == 'three_level':
+        vqvae = ThreeLevelVQVAE(
+            vocab_size=vocab_size, hidden_dim=hidden_dim, N=N,
+            bot_codebook=codebook_size, mid_codebook=32, top_codebook=16,
+            bot_dim=latent_dim, mid_dim=latent_dim, top_dim=latent_dim, cond_dim=16,
+            use_attention_decoder=use_attention_decoder
+        )
+        vqvae.load_state_dict(torch.load(vqvae_path, map_location=device))
+        vqvae.to(device).eval()
+
+        if os.path.isdir(prior_path):
+            top_p_path = os.path.join(prior_path, 'top_prior.pt')
+            mid_p_path = os.path.join(prior_path, 'mid_prior.pt')
+            bot_p_path = os.path.join(prior_path, 'bot_prior.pt')
+        else:
+            dir_name = os.path.dirname(prior_path)
+            top_p_path = os.path.join(dir_name, 'top_prior.pt')
+            mid_p_path = os.path.join(dir_name, 'mid_prior.pt')
+            bot_p_path = os.path.join(dir_name, 'bot_prior.pt')
+
+        top_prior = ThreeLevelTopPriorGRU(top_codebook=16, top_dim=latent_dim)
+        top_prior.load_state_dict(torch.load(top_p_path, map_location=device))
+        top_prior.to(device).eval()
+
+        mid_prior = ThreeLevelMidPriorGRU(mid_codebook=32, top_codebook=16, mid_dim=latent_dim, top_dim=latent_dim)
+        mid_prior.load_state_dict(torch.load(mid_p_path, map_location=device))
+        mid_prior.to(device).eval()
+
+        bot_prior = ThreeLevelBotPriorGRU(bot_codebook=codebook_size, mid_codebook=32, top_codebook=16, bot_dim=latent_dim, mid_dim=latent_dim, top_dim=latent_dim)
+        bot_prior.load_state_dict(torch.load(bot_p_path, map_location=device))
+        bot_prior.to(device).eval()
 
     # ── Real data ────────────────────────────────────────────────────────────
     ds = PadicDataset(primes=[p], N=N, num_samples_per_type=20)
@@ -113,9 +178,30 @@ def plot_padic_tree(
     # ── Generate from prior ──────────────────────────────────────────────────
     p_tensor = torch.full((num_generate,), p, dtype=torch.long, device=device)
     with torch.no_grad():
-        latent_indices = prior.sample(p_tensor, L=N // 2, temperature=0.7)
-        quantized = vqvae.quantizer.embedding(latent_indices)
-        logits = vqvae.decode(quantized, p_tensor)
+        if model_type == 'flat':
+            latent_indices = prior.sample(p_tensor, L=N // 2, temperature=0.7)
+            quantized = vqvae.quantizer.embedding(latent_indices)
+            logits = vqvae.decode(quantized, p_tensor)
+        elif model_type == 'hierarchical':
+            idx_top_s = top_prior.sample(p_tensor, L=N // 4, temperature=0.7)
+            idx_bot_s = bot_prior.sample(idx_top_s, p_tensor, temperature=0.7)
+            top_emb = vqvae.top_quantizer.embedding
+            bot_emb = vqvae.bot_quantizer.embedding
+            z_q_top = top_emb[idx_top_s] if not callable(top_emb) else top_emb(idx_top_s)
+            z_q_bot = bot_emb[idx_bot_s] if not callable(bot_emb) else bot_emb(idx_bot_s)
+            logits = vqvae.decode(z_q_bot, z_q_top, p_tensor)
+        elif model_type == 'three_level':
+            it = top_prior.sample(p_tensor, L=N // 8, temperature=0.7)
+            im = mid_prior.sample(it, p_tensor, temperature=0.7)
+            ib = bot_prior.sample(im, it, p_tensor, temperature=0.7)
+            top_emb = vqvae.top_quantizer.embedding
+            mid_emb = vqvae.mid_quantizer.embedding
+            bot_emb = vqvae.bot_quantizer.embedding
+            z_top = top_emb[it] if not callable(top_emb) else top_emb(it)
+            z_mid = mid_emb[im] if not callable(mid_emb) else mid_emb(im)
+            z_bot = bot_emb[ib] if not callable(bot_emb) else bot_emb(ib)
+            logits = vqvae.decode(z_bot, z_mid, z_top, p_tensor)
+
         generated_digits = torch.argmax(logits, dim=-1).cpu().numpy()
 
     if verbose:
@@ -128,7 +214,12 @@ def plot_padic_tree(
         recon_data = torch.tensor(real_rats + real_algs, dtype=torch.long, device=device)
         p_eval = torch.full((recon_data.shape[0],), p, dtype=torch.long, device=device)
         with torch.no_grad():
-            recon_logits, _, _ = vqvae(recon_data, p_eval)
+            if model_type == 'flat':
+                recon_logits, _, _ = vqvae(recon_data, p_eval)
+            elif model_type == 'hierarchical':
+                recon_logits, _, _, _ = vqvae(recon_data, p_eval)
+            elif model_type == 'three_level':
+                recon_logits, _, _, _, _ = vqvae(recon_data, p_eval)
             acc = (torch.argmax(recon_logits, dim=-1) == recon_data).float().mean().item()
         print(f"p={p}  recon_acc={acc*100:.1f}%  "
               f"valid={valid}/{num_generate}  "
@@ -189,12 +280,20 @@ def _parse_args():
     p.add_argument('--max_depth',     type=int, default=8)
     p.add_argument('--num_generate',  type=int, default=50)
     p.add_argument('--save_dir',      default='./plots')
+    p.add_argument('--model_type',    choices=['flat', 'hierarchical', 'three_level'], default='flat')
+    p.add_argument('--hyperbolic_top', action='store_true')
+    p.add_argument('--top_curvature',  type=float, default=1.0)
+    p.add_argument('--attention_decoder', action='store_true')
     return p.parse_args()
 
 
 if __name__ == '__main__':
     args = _parse_args()
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    # vocab_size dynamic check:
+    vocab_sz = max(max(args.primes) + 2, args.vocab_size)
+    
     plot_padic_trees(
         vqvae_path=args.vqvae_path,
         prior_path=args.prior_path,
@@ -202,10 +301,14 @@ if __name__ == '__main__':
         save_dir=args.save_dir,
         N=args.N,
         device=device,
-        vocab_size=args.vocab_size,
+        vocab_size=vocab_sz,
         hidden_dim=args.hidden_dim,
         codebook_size=args.codebook_size,
         latent_dim=args.latent_dim,
         max_depth=args.max_depth,
         num_generate=args.num_generate,
+        model_type=args.model_type,
+        hyperbolic_top=args.hyperbolic_top,
+        top_curvature=args.top_curvature,
+        use_attention_decoder=args.attention_decoder,
     )
