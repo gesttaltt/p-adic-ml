@@ -1,3 +1,4 @@
+import sys, os; _r = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, os.path.join(_r, 'src')); os.chdir(_r)
 import unittest
 import torch
 import numpy as np

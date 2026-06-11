@@ -15,6 +15,7 @@ Evaluation after each stage reports:
 Usage:
   python train_hierarchical.py [--primes 2 3 5 7 11] [--N 64] ...
 """
+import sys, os; _r = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, os.path.join(_r, 'src')); os.chdir(_r)
 
 import argparse
 import math

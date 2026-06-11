@@ -546,46 +546,46 @@ python scaling_analysis/train_broad_p23.py
 ### 3. Prime Embedding A/B Experiment
 Trains categorical vs continuous prime embedding side-by-side on the same data split:
 ```bash
-python experiment_prime_embedding.py
+python experiments/experiment_prime_embedding.py
 ```
 
 ### 4. Capacity Scaling Experiment
 Trains hidden\_dim=64 vs 256 on Broad-19 and compares metrics:
 ```bash
-python experiment_capacity_scaling.py
+python experiments/experiment_capacity_scaling.py
 ```
 
 ### 5. Train Hyperbolic VAE
 Both Poincaré and Lorentz manifolds are supported. Curvature is optionally learnable:
 ```bash
 # Poincaré ball (default)
-python train_hyperbolic.py --primes 2 3 5 7 11 --N 64 --curvature 1.0
+python train/train_hyperbolic.py --primes 2 3 5 7 11 --N 64 --curvature 1.0
 
 # Lorentz hyperboloid
-python train_hyperbolic.py --primes 2 3 5 7 11 --N 64 --manifold lorentz
+python train/train_hyperbolic.py --primes 2 3 5 7 11 --N 64 --manifold lorentz
 
 # Learnable curvature (works with both manifolds)
-python train_hyperbolic.py --primes 2 3 5 7 11 --N 64 --learnable_curvature
+python train/train_hyperbolic.py --primes 2 3 5 7 11 --N 64 --learnable_curvature
 ```
 
 ### 6. Curvature Sweep
 Trains 5 curvature configurations on a shared split and saves a Markdown report:
 ```bash
 # Poincaré sweep
-python sweep_curvature.py --manifold poincare --epochs 15
+python experiments/sweep_curvature.py --manifold poincare --epochs 15
 
 # Lorentz sweep
-python sweep_curvature.py --manifold lorentz --epochs 15
+python experiments/sweep_curvature.py --manifold lorentz --epochs 15
 ```
 Reports are saved to `./scaling_analysis/curvature_sweep_{poincare,lorentz}.md`.
 
 ### 7. Evaluate Cascade Router (supports broad models)
 ```bash
 # On default Broad-11 checkpoint
-python evaluate_cascade.py
+python eval/evaluate_cascade.py
 
 # On Broad-19 checkpoint (vocab_size=19)
-python evaluate_cascade.py \
+python eval/evaluate_cascade.py \
   --vocab_size 19 \
   --checkpoint_dir ./checkpoints/broad_p19
 ```
@@ -593,46 +593,46 @@ python evaluate_cascade.py \
 ### 8. Latent Space Interpolation
 ```bash
 # Within-prime and cross-prime interpolation
-python interpolate.py
+python experiments/interpolate.py
 ```
 
 ### 9. Unit Tests
 ```bash
-python test_pipeline.py
+python tests/test_pipeline.py
 ```
 Covers: modular arithmetic, $p$-adic conversions, Hensel lifting, dataset generation, metric alignment (Euclidean + hyperbolic), VQ-VAE, Prior GRU, Euclidean Beta-VAE, and Hyperbolic VAE (Poincaré and Lorentz, fixed and learnable curvature).
 
 ### 10. Train Hierarchical VQ-VAE
 Three-stage training (VQ-VAE → top prior → bottom prior):
 ```bash
-python train_hierarchical.py --primes 2 3 5 7 11 --N 64
+python train/train_hierarchical.py --primes 2 3 5 7 11 --N 64
 ```
 Checkpoints saved to `./checkpoints/hierarchical/` (`vqvae.pt`, `top_prior.pt`, `bot_prior.pt`).
 
 ### 11. Hierarchical Cascade Router Evaluation
 Compare flat vs hierarchical slow-path precision and speed trade-off:
 ```bash
-python evaluate_cascade_hierarchical.py
+python eval/evaluate_cascade_hierarchical.py
 ```
 Output: `./plots/cascade_hierarchical.png` and `cascade_hierarchical.md`.
 
 ### 12. Train Three-Level Hierarchical VQ-VAE (N=128)
 Four-stage training (VQ-VAE → top → mid → bot prior):
 ```bash
-python train_hierarchical_3level.py --primes 2 3 5 7 11 --N 128
+python train/train_hierarchical_3level.py --primes 2 3 5 7 11 --N 128
 ```
 Checkpoints saved to `./checkpoints/hierarchical_3level/`.
 
 ### 13. Algebraic-Only Metric Alignment Evaluation
 Evaluates alignment on Hensel-lifted algebraic sequences only (seq_type==1):
 ```bash
-python eval_algebraic_only.py
+python eval/eval_algebraic_only.py
 ```
 Output: `./plots/algebraic_alignment.md`.
 
 ### 14. Three-Level Hierarchy on Broad-23
 ```bash
-python train_hierarchical_3level.py \
+python train/train_hierarchical_3level.py \
   --primes 2 3 5 7 11 13 17 19 23 --N 128 \
   --save_dir ./checkpoints/hierarchical_3level_broad23
 ```

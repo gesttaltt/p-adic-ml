@@ -17,6 +17,7 @@ They differ only in how the prime conditioning signal is produced:
 Note: both variants have the same number of prime-embedding parameters (~320)
 so the comparison is purely about inductive bias, not capacity.
 """
+import sys, os; _r = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, os.path.join(_r, 'src')); os.chdir(_r)
 
 import os
 import math

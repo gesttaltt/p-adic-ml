@@ -10,6 +10,7 @@ Models compared:
   - Hyperbolic Poincaré hd=256 (checkpoints/hyperbolic_n64_hd256/hyperbolic_vae.pt)
   - Hyperbolic Lorentz  hd=256 (checkpoints/lorentz_n64_hd256/hyperbolic_vae.pt)
 """
+import sys, os; _r = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, os.path.join(_r, 'src')); os.chdir(_r)
 
 import os, math, torch
 import numpy as np

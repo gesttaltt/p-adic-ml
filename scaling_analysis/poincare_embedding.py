@@ -1,4 +1,4 @@
-import sys, os; root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.append(root_dir); os.chdir(root_dir)
+import sys, os; root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.extend([root_dir, os.path.join(root_dir, 'src')]); os.chdir(root_dir)
 import os
 import math
 import torch

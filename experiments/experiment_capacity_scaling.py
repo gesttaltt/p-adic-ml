@@ -9,6 +9,7 @@ hyperparameters. Evaluates on held-out p=2 and p=5 sequences.
 The hypothesis: the Broad-19 → Broad-23 accuracy drop is a capacity bottleneck.
 If hidden_dim=256 recovers or improves Broad-19's metrics, the hypothesis holds.
 """
+import sys, os; _r = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, os.path.join(_r, 'src')); os.chdir(_r)
 
 import os
 import math

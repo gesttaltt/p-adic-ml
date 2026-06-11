@@ -20,6 +20,7 @@ Outputs:
   plots/cross_prime_analysis.png       — 2×3 subplot grid (model × prime-pair)
   plots/cross_prime_analysis.md        — markdown summary table
 """
+import sys, os; _r = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, os.path.join(_r, 'src')); os.chdir(_r)
 
 import os
 import math

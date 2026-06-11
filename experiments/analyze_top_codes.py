@@ -18,6 +18,7 @@ Outputs:
   plots/top_code_analysis.png  — heatmaps + distance bar charts
   plots/top_code_analysis.md   — full markdown report
 """
+import sys, os; _r = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, os.path.join(_r, 'src')); os.chdir(_r)
 
 import os
 import math

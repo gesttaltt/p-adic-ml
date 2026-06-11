@@ -27,6 +27,7 @@ No training required — loads ./checkpoints/hierarchical/vqvae.pt.
 
 Output:  plots/conditional_alignment.md
 """
+import sys, os; _r = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, os.path.join(_r, 'src')); os.chdir(_r)
 
 import os, math, torch
 import numpy as np

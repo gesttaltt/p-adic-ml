@@ -19,6 +19,7 @@ For each τ, reports:
 
 Output: plots/cascade_hierarchical.png, plots/cascade_hierarchical.md
 """
+import sys, os; _r = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, os.path.join(_r, 'src')); os.chdir(_r)
 
 import os, math, time
 import torch
