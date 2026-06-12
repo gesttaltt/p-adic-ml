@@ -38,36 +38,48 @@ from dataset import PadicDataset
 from hierarchical_vqvae import HierarchicalVQVAE
 from metric_alignment import batch_padic_distance, compute_metric_loss
 
-# ── config ────────────────────────────────────────────────────────────────────
-CKPT        = './checkpoints/hierarchical/vqvae.pt'
-PRIMES      = [2, 3, 5, 7, 11]
-VOCAB       = max(PRIMES) + 2
-N           = 64
-SAMPLES     = 300          # per type per prime
-MIN_BUCKET  = 10           # min sequences per (code, prime) bucket to include
-DEVICE      = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# ── config / args ─────────────────────────────────────────────────────────────
+import argparse
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--ckpt', type=str, default='./checkpoints/hierarchical/vqvae.pt',
+                        help='Path to checkpoint file')
+    parser.add_argument('--primes', type=int, nargs='+', default=[2, 3, 5, 7, 11],
+                        help='Primes to evaluate')
+    parser.add_argument('--N', type=int, default=64,
+                        help='Sequence length')
+    parser.add_argument('--samples', type=int, default=300,
+                        help='Samples per type per prime')
+    parser.add_argument('--min_bucket', type=int, default=10,
+                        help='Minimum sequences per bucket')
+    parser.add_argument('--attention_decoder', action='store_true',
+                        help='Use attention-based decoder')
+    parser.add_argument('--report_path', type=str, default='./plots/conditional_alignment.md',
+                        help='Path to save the evaluation report')
+    return parser.parse_args()
 
 
 # ── load ──────────────────────────────────────────────────────────────────────
 
-def load_model():
-    m = HierarchicalVQVAE(vocab_size=VOCAB, hidden_dim=64, N=N)
-    m.load_state_dict(torch.load(CKPT, map_location=DEVICE))
-    return m.to(DEVICE).eval()
+def load_model(ckpt, vocab_size, N, attention_decoder, device):
+    m = HierarchicalVQVAE(vocab_size=vocab_size, hidden_dim=64, N=N, use_attention_decoder=attention_decoder)
+    m.load_state_dict(torch.load(ckpt, map_location=device))
+    return m.to(device).eval()
 
 
 # ── encode all sequences ──────────────────────────────────────────────────────
 
 @torch.no_grad()
-def encode_all(model, primes, samples_per_type):
+def encode_all(model, primes, N, samples_per_type, device):
     records = []
     for p_val in primes:
         ds = PadicDataset(primes=[p_val], N=N, num_samples_per_type=samples_per_type)
         for start in range(0, len(ds), 256):
             end   = min(start + 256, len(ds))
             batch = ds[start:end]
-            digs  = torch.stack([b['digits'] for b in batch]).to(DEVICE)
-            p_t   = torch.full((len(batch),), p_val, dtype=torch.long, device=DEVICE)
+            digs  = torch.stack([b['digits'] for b in batch]).to(device)
+            p_t   = torch.full((len(batch),), p_val, dtype=torch.long, device=device)
 
             z_q_bot, _, _, idx_top, _, _ = model.encode(digs, p_t)
 
@@ -117,18 +129,22 @@ def mean_padic(digit_list, p_val):
 # ── main analysis ─────────────────────────────────────────────────────────────
 
 def main():
-    print(f'Device: {DEVICE}')
-    model = load_model()
+    args = parse_args()
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f'Device: {device}')
+    
+    vocab_size = max(args.primes) + 2
+    model = load_model(args.ckpt, vocab_size, args.N, args.attention_decoder, device)
 
-    print(f'\nEncoding {len(PRIMES)} × 3 × {SAMPLES} sequences...')
-    records = encode_all(model, PRIMES, SAMPLES)
+    print(f'\nEncoding {len(args.primes)} × 3 × {args.samples} sequences...')
+    records = encode_all(model, args.primes, args.N, args.samples, device)
     print(f'Total: {len(records)} sequences')
 
     # ── 1. Top-code branch alignment ──────────────────────────────────────────
     print('\n── Top-code branch alignment ──────────────────────────────')
 
     branch_results = {}   # prime → {within_mean, cross_mean, ratio}
-    for p_val in PRIMES:
+    for p_val in args.primes:
         recs_p = [r for r in records if r['prime'] == p_val]
 
         # within-bucket distance: pairs sharing the same top code
@@ -165,13 +181,13 @@ def main():
 
     # Unconditional baseline per prime
     uncond_r = {}
-    for p_val in PRIMES:
+    for p_val in args.primes:
         rp = [r for r in records if r['prime'] == p_val]
         uncond_r[p_val] = spearman_z_vs_padic(
             [r['z_bot'] for r in rp], [r['digits'] for r in rp], p_val
         )
     print(f'  Unconditional r: ' +
-          ' '.join(f'p={p} {uncond_r[p]:.4f}' for p in PRIMES))
+          ' '.join(f'p={p} {uncond_r[p]:.4f}' for p in args.primes))
 
     # Conditional r: within (top_code, prime) buckets
     cond_r_per_prime = defaultdict(list)
@@ -182,9 +198,9 @@ def main():
         by_code_prime[r['top_code']][r['prime']].append(r)
 
     for code in range(16):
-        for p_val in PRIMES:
+        for p_val in args.primes:
             bucket = by_code_prime[code][p_val]
-            if len(bucket) < MIN_BUCKET:
+            if len(bucket) < args.min_bucket:
                 continue
             r_val = spearman_z_vs_padic(
                 [b['z_bot'] for b in bucket],
@@ -197,7 +213,7 @@ def main():
 
     print(f'\n  {"Prime":<8} {"Uncond r":>10} {"Cond r (mean)":>15} {"n buckets":>12} {"n seqs":>10}')
     print(f'  {"-"*58}')
-    for p_val in PRIMES:
+    for p_val in args.primes:
         crs = cond_r_per_prime[p_val]
         mean_r = float(np.mean(crs)) if crs else float('nan')
         print(f'  p={p_val:<6} {uncond_r[p_val]:>10.4f} {mean_r:>15.4f} '
@@ -205,11 +221,11 @@ def main():
 
     # ── save report ───────────────────────────────────────────────────────────
     lines = ['# Conditional Metric Alignment — Hierarchical VQ-VAE\n',
-             f'Checkpoint: `{CKPT}`  N={N}  {SAMPLES} samples/type/prime\n',
+             f'Checkpoint: `{args.ckpt}`  N={args.N}  {args.samples} samples/type/prime\n',
              '## 1. Top-Code Branch Alignment\n',
              '| Prime | Within-bucket dist | Cross-bucket dist | Ratio (within/cross) |',
              '| :---: | :---: | :---: | :---: |']
-    for p_val in PRIMES:
+    for p_val in args.primes:
         b = branch_results[p_val]
         flag = '✓ tight' if b['ratio'] < 1.0 else '✗ loose'
         lines.append(f'| $p={p_val}$ | {b["within"]:.4f} | {b["cross"]:.4f} '
@@ -218,7 +234,7 @@ def main():
     lines += ['\n## 2. Conditional Bottom-Code Alignment\n',
               '| Prime | Unconditional $r$ | Conditional $r$ (mean) | Gain | Buckets used |',
               '| :---: | :---: | :---: | :---: | :---: |']
-    for p_val in PRIMES:
+    for p_val in args.primes:
         crs   = cond_r_per_prime[p_val]
         mean_r = float(np.mean(crs)) if crs else float('nan')
         gain   = mean_r - uncond_r[p_val] if not math.isnan(mean_r) else float('nan')
@@ -227,10 +243,10 @@ def main():
                      f'| {gain:+.4f} {flag} | {len(crs)} |')
 
     content = '\n'.join(lines)
-    os.makedirs('./plots', exist_ok=True)
-    with open('./plots/conditional_alignment.md', 'w') as f:
+    os.makedirs(os.path.dirname(args.report_path), exist_ok=True)
+    with open(args.report_path, 'w') as f:
         f.write(content + '\n')
-    print(f'\nSaved to ./plots/conditional_alignment.md')
+    print(f'\nSaved to {args.report_path}')
     print('\n' + content)
 
 

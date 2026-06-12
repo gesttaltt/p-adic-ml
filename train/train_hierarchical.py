@@ -32,7 +32,45 @@ from metric_alignment import compute_metric_loss
 
 # ── Stage 1: VQ-VAE ───────────────────────────────────────────────────────────
 
-def train_vqvae(model, train_loader, val_loader, epochs, lr, device):
+def compute_within_bucket_metric_loss(z_q_bot, idx_top, digits, p):
+    """
+    Computes metric alignment loss on z_q_bot within groups defined by the majority top VQ code.
+    z_q_bot: [B, L_bot, bot_dim]
+    idx_top: [B, L_top]
+    digits: [B, N]
+    p: [B]
+    """
+    B = digits.size(0)
+    if B <= 1:
+        return torch.tensor(0.0, device=z_q_bot.device)
+
+    # Represent each sequence as the mean bottom latent code
+    z_bot_mean = z_q_bot.mean(dim=1)  # [B, bot_dim]
+
+    # Compute the majority top code per sequence using torch.mode
+    majority_top = torch.mode(idx_top, dim=1).values  # [B]
+
+    # Group sequences by majority top code
+    unique_codes = torch.unique(majority_top)
+    
+    bucket_losses = []
+    for code in unique_codes:
+        mask = (majority_top == code)
+        if mask.sum().item() >= 2:
+            z_subset = z_bot_mean[mask]
+            digits_subset = digits[mask]
+            p_subset = p[mask]
+            
+            loss_bucket = compute_metric_loss(z_subset, digits_subset, p_subset)
+            bucket_losses.append(loss_bucket)
+            
+    if len(bucket_losses) == 0:
+        return torch.tensor(0.0, device=z_q_bot.device)
+        
+    return torch.stack(bucket_losses).mean()
+
+
+def train_vqvae(model, train_loader, val_loader, epochs, lr, device, gamma_bucket=0.0):
     optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss(reduction='none')
 
@@ -41,14 +79,16 @@ def train_vqvae(model, train_loader, val_loader, epochs, lr, device):
 
     for epoch in range(epochs):
         model.train()
-        tot_loss = tot_recon = tot_vq = tot_correct = tot_tokens = 0
+        tot_loss = tot_recon = tot_vq = tot_bucket = tot_correct = tot_tokens = 0
 
         for batch in train_loader:
             digits = batch['digits'].to(device)
             p      = batch['p'].to(device)
             optimizer.zero_grad()
 
-            logits, vq_loss, _, _ = model(digits, p)
+            z_q_bot, z_q_top, idx_bot, idx_top, vq_loss_bot, vq_loss_top = model.encode(digits, p)
+            logits = model.decode(z_q_bot, z_q_top, p)
+            vq_loss = vq_loss_bot + vq_loss_top
 
             B, N, C = logits.shape
             recon_flat   = criterion(logits.reshape(-1, C), digits.reshape(-1))
@@ -57,12 +97,20 @@ def train_vqvae(model, train_loader, val_loader, epochs, lr, device):
             recon_loss   = (recon_sample * weights).mean()
 
             loss = recon_loss + vq_loss
+
+            if gamma_bucket > 0.0:
+                bucket_loss = compute_within_bucket_metric_loss(z_q_bot, idx_top, digits, p)
+                loss = loss + gamma_bucket * bucket_loss
+            else:
+                bucket_loss = torch.tensor(0.0, device=device)
+
             loss.backward()
             optimizer.step()
 
             tot_loss    += loss.item()    * B
             tot_recon   += recon_loss.item() * B
             tot_vq      += vq_loss.item() * B
+            tot_bucket  += bucket_loss.item() * B
             preds = torch.argmax(logits, dim=-1)
             tot_correct += (preds == digits).sum().item()
             tot_tokens  += B * N
@@ -82,9 +130,14 @@ def train_vqvae(model, train_loader, val_loader, epochs, lr, device):
                 vt    += digits.shape[0] * digits.shape[1]
         va = vc / vt
 
-        print(f'Epoch {epoch+1:02d}/{epochs:02d} | Loss: {tot_loss/n:.4f} '
-              f'(Recon: {tot_recon/n:.4f}, VQ: {tot_vq/n:.4f}) | '
-              f'Train Acc: {ta*100:.2f}% | Val Acc: {va*100:.2f}%')
+        if gamma_bucket > 0.0:
+            print(f'Epoch {epoch+1:02d}/{epochs:02d} | Loss: {tot_loss/n:.4f} '
+                  f'(Recon: {tot_recon/n:.4f}, VQ: {tot_vq/n:.4f}, Bucket: {tot_bucket/n:.4f}) | '
+                  f'Train Acc: {ta*100:.2f}% | Val Acc: {va*100:.2f}%')
+        else:
+            print(f'Epoch {epoch+1:02d}/{epochs:02d} | Loss: {tot_loss/n:.4f} '
+                  f'(Recon: {tot_recon/n:.4f}, VQ: {tot_vq/n:.4f}) | '
+                  f'Train Acc: {ta*100:.2f}% | Val Acc: {va*100:.2f}%')
 
     return model
 
@@ -244,6 +297,8 @@ def main():
     parser.add_argument('--top_curvature',    type=float, default=1.0)
     parser.add_argument('--attention_decoder', action='store_true',
                         help='Use attention-based (Transformer) decoder instead of Conv1d upsampling')
+    parser.add_argument('--gamma_bucket',     type=float, default=0.0,
+                        help='Weight for the within-bucket metric alignment loss on z_q_bot')
     parser.add_argument('--save_dir',         type=str,  default='./checkpoints/hierarchical')
     args = parser.parse_args()
 
@@ -257,6 +312,7 @@ def main():
     print(f'L_top     : {args.N // 4}  (top latent length)')
     print(f'L_bot     : {args.N // 2}  (bottom latent length)')
     print(f'Codebooks : top={args.top_codebook}, bot={args.bot_codebook}')
+    print(f'Gamma bucket: {args.gamma_bucket}')
 
     # Dataset
     dataset  = PadicDataset(primes=args.primes, N=args.N,
@@ -288,7 +344,7 @@ def main():
     n_params = sum(p.numel() for p in vqvae.parameters())
     print(f'Parameters: {n_params:,}')
 
-    vqvae = train_vqvae(vqvae, train_loader, val_loader, args.vqvae_epochs, args.lr, device)
+    vqvae = train_vqvae(vqvae, train_loader, val_loader, args.vqvae_epochs, args.lr, device, args.gamma_bucket)
     torch.save(vqvae.state_dict(), os.path.join(args.save_dir, 'vqvae.pt'))
 
     # ── Stage 2 ───────────────────────────────────────────────────────────
