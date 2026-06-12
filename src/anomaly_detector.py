@@ -12,7 +12,8 @@ def get_reconstruction_error(model, digits, p, weighted=False, alpha=1.5):
     """
     model.eval()
     with torch.no_grad():
-        logits, _, _ = model(digits, p)
+        outputs = model(digits, p)
+        logits = outputs[0] if isinstance(outputs, tuple) else outputs
             
         B, N, C = logits.shape
         criterion = nn.CrossEntropyLoss(reduction='none')
