@@ -1,5 +1,5 @@
 """
-evaluate_cascade_hierarchical.py  —  Item #23
+evaluate_cascade_hierarchical.py  —  Items #23 / #28
 
 Compares flat vs hierarchical slow-path in the Cascade Gating System.
 
@@ -17,10 +17,17 @@ For each τ, reports:
   - precision (hierarchical VQ-VAE recon accuracy on final output)
   - velocity (samples/sec)
 
-Output: plots/cascade_hierarchical.png, plots/cascade_hierarchical.md
+CLI args:
+  --hier_dir   PATH   checkpoint directory for slow-path hier model
+                      (default: ./checkpoints/hierarchical)
+  --hier_vocab INT    vocab_size of the hier model (default: 13)
+  --save_tag   STR    suffix for output filenames (default: '')
+
+Output: plots/cascade_hierarchical{save_tag}.png / .md
 """
 import sys, os; _r = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, os.path.join(_r, 'src')); os.chdir(_r)
 
+import argparse
 import os, math, time
 import torch
 import torch.nn as nn
@@ -36,25 +43,21 @@ from anomaly_detector import get_reconstruction_error
 # ── config ────────────────────────────────────────────────────────────────────
 PRIMES        = [2, 3, 5, 7, 11]
 N             = 64
-VOCAB         = 13
 NUM_SAMPLES   = 500          # total sequences to generate per threshold sweep
 THRESHOLDS    = [0.0, 0.1, 0.25, 0.4, 0.6, 0.8, 1.0, 1.5, 2.0, 3.0, 10.0]
 DEVICE        = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 BETA_VAE_CKPT    = './checkpoints/euclidean_n64/beta_vae_metric.pt'
-# Broad-19 hd=256 uses the new PrimeEmbedder; test only on p∈{2,3,5,7,11}
-# so all generated digits are valid (< p) for both models
 FLAT_VQVAE_CKPT  = './checkpoints/broad_p19_hd256/vqvae.pt'
 FLAT_PRIOR_CKPT  = './checkpoints/broad_p19_hd256/prior.pt'
-FLAT_VOCAB       = 19    # vocab_size used by broad_p19 checkpoints
+FLAT_VOCAB       = 19
 FLAT_HIDDEN_DIM  = 256
-HIER_DIR         = './checkpoints/hierarchical'
 
 
 # ── model loading ─────────────────────────────────────────────────────────────
 
-def load_models():
-    beta_vae = ConditionalBetaVAE(vocab_size=VOCAB, hidden_dim=64, latent_dim=32, N=N)
+def load_models(hier_dir, hier_vocab):
+    beta_vae = ConditionalBetaVAE(vocab_size=13, hidden_dim=64, latent_dim=32, N=N)
     beta_vae.load_state_dict(torch.load(BETA_VAE_CKPT, map_location=DEVICE))
     beta_vae.to(DEVICE).eval()
 
@@ -68,19 +71,19 @@ def load_models():
     flat_prior.load_state_dict(torch.load(FLAT_PRIOR_CKPT, map_location=DEVICE))
     flat_prior.to(DEVICE).eval()
 
-    hier_vqvae = HierarchicalVQVAE(vocab_size=VOCAB, hidden_dim=64, N=N)
+    hier_vqvae = HierarchicalVQVAE(vocab_size=hier_vocab, hidden_dim=64, N=N)
     hier_vqvae.load_state_dict(
-        torch.load(f'{HIER_DIR}/vqvae.pt', map_location=DEVICE))
+        torch.load(f'{hier_dir}/vqvae.pt', map_location=DEVICE))
     hier_vqvae.to(DEVICE).eval()
 
     top_prior = TopPriorGRU(top_codebook=16, top_dim=32)
     top_prior.load_state_dict(
-        torch.load(f'{HIER_DIR}/top_prior.pt', map_location=DEVICE))
+        torch.load(f'{hier_dir}/top_prior.pt', map_location=DEVICE))
     top_prior.to(DEVICE).eval()
 
     bot_prior = BotPriorGRU(bot_codebook=64, top_codebook=16, bot_dim=32, top_dim=32)
     bot_prior.load_state_dict(
-        torch.load(f'{HIER_DIR}/bot_prior.pt', map_location=DEVICE))
+        torch.load(f'{hier_dir}/bot_prior.pt', map_location=DEVICE))
     bot_prior.to(DEVICE).eval()
 
     return beta_vae, flat_vqvae, flat_prior, hier_vqvae, top_prior, bot_prior
@@ -170,8 +173,19 @@ def sweep(beta_vae, slow_fn, hier_vqvae, p_tensor):
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--hier_dir',   default='./checkpoints/hierarchical',
+                        help='Checkpoint dir for the hierarchical slow-path model')
+    parser.add_argument('--hier_vocab', type=int, default=13,
+                        help='vocab_size of the hierarchical model')
+    parser.add_argument('--save_tag',   default='',
+                        help='Suffix appended to output filenames (e.g. _broad23)')
+    args = parser.parse_args()
+
     print(f'Device: {DEVICE}')
-    beta_vae, flat_vqvae, flat_prior, hier_vqvae, top_prior, bot_prior = load_models()
+    print(f'Hier checkpoint: {args.hier_dir}  (vocab={args.hier_vocab})')
+    beta_vae, flat_vqvae, flat_prior, hier_vqvae, top_prior, bot_prior = \
+        load_models(args.hier_dir, args.hier_vocab)
 
     # Build test batch
     primes_rep = []
@@ -203,26 +217,35 @@ def main():
 
     axes[0].plot(flat_fr, flat_pr, 'b-o', ms=5, label='Flat slow path')
     axes[0].plot(hier_fr, hier_pr, 'r-o', ms=5, label='Hierarchical slow path')
-    axes[0].set_xlabel('Fast-path rate'); axes[0].set_ylabel('Precision (hier VQ-VAE recon acc)')
-    axes[0].set_title('Precision–Speed Trade-off'); axes[0].legend(); axes[0].grid(True, alpha=0.3)
+    axes[0].set_xlabel('Fast-path rate')
+    axes[0].set_ylabel('Precision (hier VQ-VAE recon acc)')
+    axes[0].set_title('Precision–Speed Trade-off')
+    axes[0].legend(); axes[0].grid(True, alpha=0.3)
 
     flat_vel = [r['velocity'] for r in flat_rows]
     hier_vel = [r['velocity'] for r in hier_rows]
     axes[1].plot(flat_fr, flat_vel, 'b-o', ms=5, label='Flat slow path')
     axes[1].plot(hier_fr, hier_vel, 'r-o', ms=5, label='Hierarchical slow path')
-    axes[1].set_xlabel('Fast-path rate'); axes[1].set_ylabel('Velocity (samples/sec)')
-    axes[1].set_title('Velocity–Speed Trade-off'); axes[1].legend(); axes[1].grid(True, alpha=0.3)
+    axes[1].set_xlabel('Fast-path rate')
+    axes[1].set_ylabel('Velocity (samples/sec)')
+    axes[1].set_title('Velocity–Speed Trade-off')
+    axes[1].legend(); axes[1].grid(True, alpha=0.3)
 
-    plt.suptitle('Cascade Router: Flat vs Hierarchical Slow Path', fontweight='bold')
+    tag = args.save_tag
+    plt.suptitle(f'Cascade Router: Flat vs Hierarchical Slow Path{" — " + tag.lstrip("_") if tag else ""}',
+                 fontweight='bold')
     plt.tight_layout()
     os.makedirs('./plots', exist_ok=True)
-    plt.savefig('./plots/cascade_hierarchical.png', bbox_inches='tight')
+    png_path = f'./plots/cascade_hierarchical{tag}.png'
+    md_path  = f'./plots/cascade_hierarchical{tag}.md'
+    plt.savefig(png_path, bbox_inches='tight')
     plt.close()
-    print('\nSaved ./plots/cascade_hierarchical.png')
+    print(f'\nSaved {png_path}')
 
     # ── markdown report ───────────────────────────────────────────────────────
-    lines = ['# Cascade Router: Flat vs Hierarchical Slow Path\n',
+    lines = [f'# Cascade Router: Flat vs Hierarchical Slow Path{" — " + tag.lstrip("_") if tag else ""}\n',
              f'Fast path: Beta-VAE (`{BETA_VAE_CKPT}`)  ',
+             f'Hier slow path: `{args.hier_dir}` (vocab={args.hier_vocab})  ',
              f'Precision metric: HierarchicalVQVAE recon accuracy  ',
              f'N={N}, {NUM_SAMPLES} samples, primes={PRIMES}\n',
              '| τ | Flat fast% | Flat prec% | Hier fast% | Hier prec% |',
@@ -233,9 +256,9 @@ def main():
             f'| {h["fast_rate"]*100:.1f} | {h["precision"]*100:.2f} |'
         )
     content = '\n'.join(lines)
-    with open('./plots/cascade_hierarchical.md', 'w') as fh:
+    with open(md_path, 'w') as fh:
         fh.write(content + '\n')
-    print('Saved ./plots/cascade_hierarchical.md')
+    print(f'Saved {md_path}')
     print('\n' + content)
 
 

@@ -108,6 +108,12 @@ def train_prior(prior, ds, batch_size, epochs, lr, device, label):
     return prior
 
 
+def _lookup(quantizer, idx):
+    """Works for both nn.Embedding (callable) and ManifoldParameter (subscriptable)."""
+    emb = quantizer.embedding
+    return emb(idx) if callable(emb) else emb[idx]
+
+
 # ── Evaluation ─────────────────────────────────────────────────────────────────
 
 @torch.no_grad()
@@ -127,7 +133,7 @@ def evaluate(model, top_prior, mid_prior, bot_prior, primes, N, device, n_sample
         it  = top_prior.sample(p_t, L=N//8, temperature=0.8)
         im  = mid_prior.sample(it, p_t, temperature=0.8)
         ib  = bot_prior.sample(im, it, p_t, temperature=0.8)
-        z_top = model.top_quantizer.embedding(it)
+        z_top = _lookup(model.top_quantizer, it)
         z_mid = model.mid_quantizer.embedding(im)
         z_bot = model.bot_quantizer.embedding(ib)
         seqs  = torch.argmax(model.decode(z_bot, z_mid, z_top, p_t), dim=-1).cpu().numpy()
@@ -154,6 +160,9 @@ def main():
     parser.add_argument('--top_codebook',     type=int,   default=16)
     parser.add_argument('--attention_decoder', action='store_true',
                         help='Use attention-based (Transformer) decoder instead of Conv1d upsampling')
+    parser.add_argument('--hyperbolic_top',   action='store_true',
+                        help='Use Poincaré-ball top codebook instead of Euclidean')
+    parser.add_argument('--top_curvature',    type=float, default=1.0)
     parser.add_argument('--save_dir',         type=str,   default='./checkpoints/hierarchical_3level')
     args = parser.parse_args()
 
@@ -173,10 +182,14 @@ def main():
     full_loader   = DataLoader(ds,     batch_size=args.batch_size, shuffle=False)
 
     # Stage 1
+    if args.hyperbolic_top:
+        print(f'Top codebook: Poincaré ball (c={args.top_curvature})')
     model = ThreeLevelVQVAE(vocab_size=vocab, hidden_dim=args.hidden_dim, N=args.N,
                              bot_codebook=args.bot_codebook, mid_codebook=args.mid_codebook,
                              top_codebook=args.top_codebook,
-                             use_attention_decoder=args.attention_decoder)
+                             use_attention_decoder=args.attention_decoder,
+                             hyperbolic_top=args.hyperbolic_top,
+                             top_curvature=args.top_curvature)
     print(f'Parameters: {sum(p.numel() for p in model.parameters()):,}')
     model = train_vqvae(model, train_loader, val_loader, args.vqvae_epochs, args.lr, device)
     torch.save(model.state_dict(), f'{args.save_dir}/vqvae.pt')

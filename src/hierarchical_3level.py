@@ -38,23 +38,26 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from models import VectorQuantizer, ResidualBlock, PrimeEmbedder
+from hierarchical_vqvae import HyperbolicVectorQuantizer
 
 
 class ThreeLevelVQVAE(nn.Module):
     def __init__(self, vocab_size=13, hidden_dim=64, N=128,
                  bot_codebook=64, mid_codebook=32, top_codebook=16,
                  bot_dim=32, mid_dim=32, top_dim=32, cond_dim=16,
-                 use_attention_decoder=False):
+                 use_attention_decoder=False,
+                 hyperbolic_top=False, top_curvature=1.0):
         super().__init__()
         assert N % 8 == 0, 'N must be divisible by 8'
-        self.vocab_size = vocab_size
-        self.N          = N
-        self.L_bot      = N // 2
-        self.L_mid      = N // 4
-        self.L_top      = N // 8
-        self.bot_dim    = bot_dim
-        self.mid_dim    = mid_dim
-        self.top_dim    = top_dim
+        self.vocab_size    = vocab_size
+        self.N             = N
+        self.L_bot         = N // 2
+        self.L_mid         = N // 4
+        self.L_top         = N // 8
+        self.bot_dim       = bot_dim
+        self.mid_dim       = mid_dim
+        self.top_dim       = top_dim
+        self.hyperbolic_top = hyperbolic_top
 
         # ── input embedding ──────────────────────────────────────────────────
         self.digit_emb  = nn.Embedding(vocab_size, hidden_dim)
@@ -81,7 +84,11 @@ class ThreeLevelVQVAE(nn.Module):
         self.enc_stride2_top = nn.Conv1d(hidden_dim, hidden_dim, 3, stride=2, padding=1)
         self.enc_res_top     = ResidualBlock(hidden_dim)
         self.enc_proj_top    = nn.Conv1d(hidden_dim, top_dim, 1)
-        self.top_quantizer   = VectorQuantizer(top_codebook, top_dim)
+        if hyperbolic_top:
+            self.top_quantizer = HyperbolicVectorQuantizer(
+                top_codebook, top_dim, curvature=top_curvature)
+        else:
+            self.top_quantizer = VectorQuantizer(top_codebook, top_dim)
 
         # ── decoder ───────────────────────────────────────────────────────
         self.use_attention_decoder = use_attention_decoder
@@ -149,6 +156,8 @@ class ThreeLevelVQVAE(nn.Module):
         return z_q_bot, z_q_mid, z_q_top, idx_bot, idx_mid, idx_top, vq_loss
 
     def decode(self, z_q_bot, z_q_mid, z_q_top, p):
+        if self.hyperbolic_top:
+            z_q_top = self.top_quantizer.manifold.logmap0(z_q_top)
         if self.use_attention_decoder:
             B = z_q_bot.shape[0]
             top_feats = self.dec_top_proj_attn(z_q_top)  # [B, L_top, H]
