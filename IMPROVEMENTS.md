@@ -380,6 +380,24 @@ Three levels compound with broad training: +2.76pp p=5 over 2-level Broad-23, +2
 
 **Files**: `hierarchical_vqvae.py`, `hierarchical_3level.py`, `train_hierarchical.py`, `train_hierarchical_3level.py`, `test_pipeline.py`.
 
+---
+
+### 32. Within-Bucket Metric Alignment for 3-Level VQ-VAE ✅
+
+**Plan**: Port `--gamma_bucket` from the 2-level trainer (Item 27) to `train_hierarchical_3level.py`. Group sequences by majority top code, compute `compute_metric_loss` on mean-pooled `z_q_bot` within each bucket, add `gamma_bucket × bucket_loss` to Stage 1 objective.
+
+**Result** (Broad-11, N=128, attention decoder):
+
+| gamma | Val acc | p=5 recon | VQ loss trend |
+|---|---|---|---|
+| 0 (baseline) | **79.3%** | **87.5%** | decreasing ↓ |
+| 5.0 | 31.0% | 27.1% | increasing ↑ |
+| 0.5 | 32.9% | 27.1% | increasing ↑ |
+
+**Conclusion**: The within-bucket metric loss breaks 3-level VQ training regardless of gamma magnitude. The VQ loss **increases** during training (0.087 → 0.171 for gamma=0.5), indicating the encoder is diverging from the codebook rather than committing to it. Root cause: the metric alignment gradient pushes `z_bot` toward a continuous p-adic geometry, directly conflicting with the VQ commitment gradient that pushes `z_bot` toward 64 discrete codebook points. In the 2-level model (Item 27) this conflict was manageable; in the 3-level attention decoder the competing objectives collapse the quantization.
+
+**If revisiting**: (a) apply metric loss to pre-quantization `z_bot` instead of STE output, bypassing the conflict entirely; or (b) warm-start with 10 epochs of pure VQ training then introduce metric loss at gamma ≤ 0.05.
+
 **Expected outcome**: +2–5pp val accuracy improvement over Conv decoder, particularly at high-branching primes where the digit patterns are more complex and local attention over the hierarchy would help.
 
 ---
