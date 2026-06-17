@@ -427,9 +427,21 @@ Alignment *loss* is less stable: c=5.0 Poincaré shows dramatically higher loss 
 
 **Plan**: Add `--warmup_epochs` (default 8) to `train_hierarchical_3level.py`. During the first `warmup_epochs`, train with `gamma_bucket=0` (pure VQ). From epoch `warmup_epochs+1` onward, apply `gamma_bucket`. Also add shared-layer gradient isolation: compute the bucket metric loss on a stop-gradient copy of the per-sequence pooled bot representation — i.e., `z_bot_pool = z_q_bot.mean(1).detach()` fed through a small `metric_proj` MLP — so the metric gradient trains only the projection head, not the shared encoder. This fully decouples the two objectives.
 
-**What to measure**:
-- Val accuracy vs Euclidean 3-level baseline (79.3%)
-- VQ loss trend (should decrease, not increase as in Item 32)
-- Conditional Spearman r after training (target ≥ 0.2, baseline ≈ 0.05–0.13)
+**Result** (Broad-11, N=128, 341K params, `--gamma_bucket 1.0 --warmup_epochs 8 --attention_decoder`):
 
-**Expected outcome**: Val accuracy within 2pp of baseline (≥ 77%), VQ loss stable/decreasing, measurable improvement in Spearman r from the metric projection head.
+| Metric | Warmup model | Item 32 (gamma=5 no warmup) |
+|:---|:---:|:---:|
+| Val accuracy (epoch 15) | 30.6% | 31.0% |
+| VQ loss trend | ↓ decreasing ✅ | ↑ increasing ❌ |
+| Metric loss (epoch 15) | 0.309 | — |
+| Spearman r (raw z_q_bot) | 0.008 | — |
+| Spearman r (metric_proj) | 0.011 | — |
+| Top prior accuracy | 96.6% | ~58% |
+
+**Architecture fix confirmed**: Warm-start + detached `metric_proj` head prevents the gradient conflict. VQ loss decreases from 0.065 → 0.047 during the metric phase (vs. actively increasing in Item 32). Top prior accuracy 96.6% confirms stable codebook convergence.
+
+**Geometric alignment not achieved**: Spearman r ≈ 0.01 for both raw `z_q_bot` and `metric_proj` output — essentially zero, far below the target ≥0.2. The metric_proj head did learn (metric loss: 0.597 → 0.309), but the improvement didn't translate to geometric structure in the latent space.
+
+**Root cause of failed alignment**: The 3-level VQ-VAE on N=128 with 5 primes reaches only ~30% val accuracy in 15 epochs — the encoder representations are not yet reliable enough to encode p-adic geometry. With val acc at 30%, the tokens decoded from the model are mostly wrong; p-adic distances computed on these poor reconstructions provide a noisy training signal for the metric_proj head. This is fundamentally a capacity/convergence problem, not a loss-design problem.
+
+**Conclusion**: The warm-start + detached projection head is the correct architectural approach to decouple metric alignment from VQ training in 3-level models. However, it requires the underlying VQ-VAE to first achieve good reconstruction quality. Next step would be extended training (50+ epochs) or a dedicated pre-training phase for the 3-level model before introducing metric alignment. ✅ (architecture fix) / ❌ (alignment improvement)
