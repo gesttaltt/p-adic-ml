@@ -90,6 +90,15 @@ class ThreeLevelVQVAE(nn.Module):
         else:
             self.top_quantizer = VectorQuantizer(top_codebook, top_dim)
 
+        # ── metric projection head (optional) ────────────────────────────
+        # Trained by metric alignment loss; receives detached z_bot so the
+        # gradient is isolated from the encoder and VQ commitment objective.
+        self.metric_proj = nn.Sequential(
+            nn.Linear(bot_dim, bot_dim),
+            nn.ReLU(),
+            nn.Linear(bot_dim, bot_dim),
+        )
+
         # ── decoder ───────────────────────────────────────────────────────
         self.use_attention_decoder = use_attention_decoder
         if use_attention_decoder:

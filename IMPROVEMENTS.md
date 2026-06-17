@@ -394,11 +394,18 @@ Three levels compound with broad training: +2.76pp p=5 over 2-level Broad-23, +2
 | 5.0 | 31.0% | 27.1% | increasing ↑ |
 | 0.5 | 32.9% | 27.1% | increasing ↑ |
 
-**Conclusion**: The within-bucket metric loss breaks 3-level VQ training regardless of gamma magnitude. The VQ loss **increases** during training (0.087 → 0.171 for gamma=0.5), indicating the encoder is diverging from the codebook rather than committing to it. Root cause: the metric alignment gradient pushes `z_bot` toward a continuous p-adic geometry, directly conflicting with the VQ commitment gradient that pushes `z_bot` toward 64 discrete codebook points. In the 2-level model (Item 27) this conflict was manageable; in the 3-level attention decoder the competing objectives collapse the quantization.
+**Root cause analysis**: Two gradients flow to the encoder output `z_bot` simultaneously:
 
-**If revisiting**: (a) apply metric loss to pre-quantization `z_bot` instead of STE output, bypassing the conflict entirely; or (b) warm-start with 10 epochs of pure VQ training then introduce metric loss at gamma ≤ 0.05.
+- `∇_zbot L_vq = 2 · β · (z_bot − z_q)` — pushes `z_bot` toward the nearest (fixed) codebook entry
+- `∇_zbot L_metric` — pushes `z_bot` toward a continuous p-adic geometry
 
-**Expected outcome**: +2–5pp val accuracy improvement over Conv decoder, particularly at high-branching primes where the digit patterns are more complex and local attention over the hierarchy would help.
+Note: using pre-quantization `z_bot` instead of STE `z_q_st` does **not** help — the STE makes `z_q_st = z_bot + (z_q − z_bot).detach()`, so the metric gradient flows identically to `z_bot` either way.
+
+An additional amplifier in the 3-level model: `enc_stride2` and `enc_res_shared` are shared across all three branches. The metric gradient on `z_bot` propagates through these shared layers, disrupting `z_mid` and `z_top` training too — a coupling that doesn't exist in the 2-level model.
+
+**Why Item 27 (2-level) worked but Item 32 (3-level) failed**: The 2-level encoder has no shared-layer coupling between branches. The metric gradient stays isolated to the bot branch.
+
+**Correct fix — warm-start** (Item 33): Train the VQ-VAE for `warmup_epochs` with no metric loss. Once the codebook is stable (`z_bot ≈ z_q`), the commitment gradient `∇_zbot L_vq ≈ 0`, and the metric loss can organize the continuous space without conflict. Then introduce `gamma_bucket` for the remaining epochs.
 
 ---
 
@@ -411,3 +418,18 @@ Spearman r changes by ≤0.003 across all 4 models — model ranking is complete
 Alignment *loss* is less stable: c=5.0 Poincaré shows dramatically higher loss on algebraic p=2 (0.226 vs 0.012 mixed, 19× worse) while Spearman r barely changes — revealing that c=5.0's distance scaling is calibrated to the full mixture but doesn't generalize well to algebraic-only p=2. All other models show ≤2% change in loss.
 
 **Conclusion**: The existing mixed evaluations are reliable benchmarks. Model rankings don't need to be re-run with algebraic filtering. The one actionable insight: c=5.0's alignment loss advantage may partly reflect calibration to the mixture rather than a fundamental improvement on algebraic structure.
+
+---
+
+### 33. Warm-Start Metric Alignment for 3-Level VQ-VAE
+
+**Problem**: Item 32 showed that applying `--gamma_bucket` from epoch 1 destroys 3-level VQ training (val acc drops from 79.3% to 33%). Root cause: the metric gradient and VQ commitment gradient conflict on the shared encoder layers. The fix is a warm-start: let the VQ converge first, then introduce the metric loss once `z_bot ≈ z_q` and commitment pressure is near zero.
+
+**Plan**: Add `--warmup_epochs` (default 8) to `train_hierarchical_3level.py`. During the first `warmup_epochs`, train with `gamma_bucket=0` (pure VQ). From epoch `warmup_epochs+1` onward, apply `gamma_bucket`. Also add shared-layer gradient isolation: compute the bucket metric loss on a stop-gradient copy of the per-sequence pooled bot representation — i.e., `z_bot_pool = z_q_bot.mean(1).detach()` fed through a small `metric_proj` MLP — so the metric gradient trains only the projection head, not the shared encoder. This fully decouples the two objectives.
+
+**What to measure**:
+- Val accuracy vs Euclidean 3-level baseline (79.3%)
+- VQ loss trend (should decrease, not increase as in Item 32)
+- Conditional Spearman r after training (target ≥ 0.2, baseline ≈ 0.05–0.13)
+
+**Expected outcome**: Val accuracy within 2pp of baseline (≥ 77%), VQ loss stable/decreasing, measurable improvement in Spearman r from the metric projection head.
