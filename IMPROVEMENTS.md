@@ -445,3 +445,37 @@ Alignment *loss* is less stable: c=5.0 Poincaré shows dramatically higher loss 
 **Root cause of failed alignment**: The 3-level VQ-VAE on N=128 with 5 primes reaches only ~30% val accuracy in 15 epochs — the encoder representations are not yet reliable enough to encode p-adic geometry. With val acc at 30%, the tokens decoded from the model are mostly wrong; p-adic distances computed on these poor reconstructions provide a noisy training signal for the metric_proj head. This is fundamentally a capacity/convergence problem, not a loss-design problem.
 
 **Conclusion**: The warm-start + detached projection head is the correct architectural approach to decouple metric alignment from VQ training in 3-level models. However, it requires the underlying VQ-VAE to first achieve good reconstruction quality. Next step would be extended training (50+ epochs) or a dedicated pre-training phase for the 3-level model before introducing metric alignment. ✅ (architecture fix) / ❌ (alignment improvement)
+
+---
+
+### 34. 3-Level VQ-VAE Convergence Diagnosis (50-epoch pure VQ) ✅
+
+**Problem**: Items 32 and 33 assumed the 3-level baseline was ~79.3% val acc (taken from the 2-level model on N=64). The actual 3-level on N=128 stalled at ~30% after 15 epochs, making it impossible to diagnose whether the failure was architectural (bad design) or just insufficient training.
+
+**Experiment**: Train `ThreeLevelVQVAE` for 50 epochs with no metric loss (`--gamma_bucket 0.0 --vqvae_epochs 50 --attention_decoder`), same hyperparameters as Items 32–33. Checkpoint: `./checkpoints/hierarchical_3level_50ep/`.
+
+**Result** — staircase learning pattern:
+
+| Epoch range | Val acc range | Event |
+|:---:|:---:|:---|
+| 1–15 | 27% → 30.7% | Phase 1: rapid initial learning, then plateau |
+| 15–20 | ~30–31% | Plateau 1 |
+| 21–30 | 31.8% → 33.9% | Phase 2: codebook reorganization, new jump |
+| 30–45 | ~34% | Plateau 2 |
+| 46–50 | 34.6% → **36.7%** | Phase 3: another reorganization (VQ loss ↑ 0.07→0.18), still rising at epoch 50 |
+
+Per-prime recon at epoch 50 (vs. epoch 15):
+
+| Prime | Epoch 15 | Epoch 50 | Gain |
+|:---:|:---:|:---:|:---:|
+| p=2 | 53.9% | 58.1% | +4.2pp |
+| p=3 | 38.9% | 43.7% | +4.8pp |
+| p=5 | 26.4% | 31.8% | +5.4pp |
+| p=7 | 21.3% | 26.6% | +5.3pp |
+| p=11 | 14.2% | 20.5% | +6.3pp |
+
+Samples at epoch 50 show structured periodic and alternating patterns across all primes — qualitatively much better than the near-constant outputs at epoch 15.
+
+**Diagnosis**: The 3-level VQ-VAE is **not stuck** — it learns in discrete staircase phases driven by codebook reorganization events (brief VQ loss spikes followed by accuracy jumps). The 15-epoch runs caught only Phase 1. At epoch 50 the model is entering Phase 3 and still improving.
+
+**Implication for Item 33**: The warmup of 8 epochs was far too short. The model needs at least 30–40 epochs to exit Phase 1 before a metric_proj head has solid representations to work with. A re-run of Item 33 with `--warmup_epochs 40 --vqvae_epochs 80` is the natural next step.
