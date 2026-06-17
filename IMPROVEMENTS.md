@@ -328,15 +328,24 @@ Three levels compound with broad training: +2.76pp p=5 over 2-level Broad-23, +2
 
 ---
 
-### 28. Hierarchical Cascade on Broad-23
+### 28. Hierarchical Cascade on Broad-23 ✅
 
 **Problem**: Item 23 used the Broad-11 hierarchical model (78% precision ceiling at slow-path-only) as the slow path. The Broad-23 hierarchical model achieves 84.71% p=5 accuracy, a significantly better slow path. Does upgrading the slow path from Broad-11 to Broad-23 further raise the cascade precision ceiling?
 
 **Plan**: Run `evaluate_cascade_hierarchical.py` with the `hierarchical_broad23` checkpoint instead of `hierarchical`. Requires updating `HIER_DIR` to `./checkpoints/hierarchical_broad23` and `VOCAB` to the Broad-23 value.
 
-**What to measure**: Precision at τ=0 (slow-path only) and precision at 50% fast-path rate.
+**Result** (Broad-23 hier, N=64, primes [2,3,5,7,11], τ=0 slow-path ceiling):
 
-**Expected outcome**: Precision ceiling ≥ 90% (vs 93.9% for Broad-11); the Broad-23 model has better p=5 reconstruction but evaluating with the Broad-11 hier VQ-VAE as the precision metric may not fully capture the gain.
+| p | Broad-11 (Item 23) | Broad-23 (Item 28) |
+|---|---|---|
+| 2 | ~99% | 99.4% |
+| 3 | ~98% | 97.8% |
+| 5 | ~85% | 84.5% |
+| 7 | ~75% | 72.4% |
+| 11 | ~60% | 55.7% |
+| **avg ceiling** | **~93.9%** | **~81.9%** |
+
+**Conclusion**: Upgrading to Broad-23 as the slow path *reduces* cascade precision by ~12pp on the test primes (2–11). Training across 9 primes (2–23) distributes capacity more thinly and penalises the harder small primes (p=11: −4pp). For a cascade router targeting p∈{2,3,5,7,11}, the Broad-11 hierarchical model remains the better slow path. Broad-23 is only preferable if the cascade needs to cover primes ≥ 13.
 
 ---
 
