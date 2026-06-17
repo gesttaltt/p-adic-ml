@@ -349,15 +349,23 @@ Three levels compound with broad training: +2.76pp p=5 over 2-level Broad-23, +2
 
 ---
 
-### 29. Three-Level with Hyperbolic Top Codebook
+### 29. Three-Level with Hyperbolic Top Codebook ✅
 
 **Problem**: Item 21 fixed the hyperbolic top codebook collapse in the two-level model, reaching 70.14% val accuracy (vs 78.03% Euclidean top) with healthy utilisation (39.1% top-prior accuracy). The three-level model provides more abstraction levels; applying the fixed `HyperbolicVectorQuantizer` to the top branch (N/8 tokens, codebook 16) could give the global-branch level a geometry that better matches the p-adic tree structure — while the mid and bottom levels remain Euclidean for reconstruction quality.
 
 **Plan**: Modify `ThreeLevelVQVAE` to accept a `hyperbolic_top=True` flag, using `HyperbolicVectorQuantizer` (v2, with spread init + EMA + entropy reg) for the top branch. Train on Broad-11, N=128.
 
-**What to measure**: Val accuracy, top-prior accuracy (was 100% before fix, 39.1% after fix in 2-level), p=5 reconstruction accuracy.
+**Result** (Broad-11, N=128, hd=64, `--hyperbolic_top --top_curvature 1.0`):
 
-**Expected outcome**: Top-prior accuracy should remain healthy (below 60%) given the collapse fix. Val accuracy may be 1–3pp below all-Euclidean 3-level (79.29%).
+| Métrica | Euclidean 3-level (Item 25) | Hyperbolic top (Item 29) |
+|---|---|---|
+| Val acc | 79.29% | 79.55% |
+| p=5 recon | **87.47%** | 78.63% |
+| p=7 recon | **75.29%** | 67.01% |
+| p=11 recon | **59.75%** | 47.08% |
+| Top-prior acc | 32.92% | **100%** ← colapso |
+
+**Conclusion**: The top codebook collapsed (top-prior 100% from epoch 2 — all sequences assigned to the same codes). The total val accuracy is marginally higher (79.55%) because the decoder learned to rely on mid+bot and ignore the top level, but per-prime reconstruction degrades significantly (p=5: −8.8pp, p=11: −12.7pp). The Item 21 collapse fix does not transfer cleanly to the 3-level setting: the 3-stride encoder chain produces more compressed representations that are harder to disentangle at the top level, making the EMA + entropy regularizer insufficient at `entropy_weight=0.05`. The all-Euclidean 3-level remains the best architecture.
 
 ---
 
