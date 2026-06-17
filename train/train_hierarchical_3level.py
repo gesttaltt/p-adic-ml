@@ -23,28 +23,55 @@ from hierarchical_3level import (ThreeLevelVQVAE,
                                   ThreeLevelTopPriorGRU,
                                   ThreeLevelMidPriorGRU,
                                   ThreeLevelBotPriorGRU)
+from metric_alignment import compute_metric_loss
 
 
 # ── Stage 1: VQ-VAE ────────────────────────────────────────────────────────────
 
-def train_vqvae(model, train_loader, val_loader, epochs, lr, device):
+def _bucket_metric_loss(z_q_bot, idx_top, digits, p):
+    """Within-bucket metric alignment on z_q_bot, buckets defined by majority top code."""
+    z_pooled  = z_q_bot.mean(dim=1)                    # [B, bot_dim]
+    top_codes = torch.mode(idx_top, dim=1).values      # [B]
+    losses = []
+    for code in top_codes.unique():
+        mask = top_codes == code
+        if mask.sum() < 2:
+            continue
+        l = compute_metric_loss(z_pooled[mask], digits[mask], p[mask])
+        if l > 0:
+            losses.append(l)
+    return torch.stack(losses).mean() if losses else z_pooled.sum() * 0.0
+
+
+def train_vqvae(model, train_loader, val_loader, epochs, lr, device,
+                gamma_bucket=0.0):
     opt = optim.Adam(model.parameters(), lr=lr)
     crit = nn.CrossEntropyLoss(reduction='none')
     print('\n--- Stage 1: Training Three-Level VQ-VAE ---')
+    if gamma_bucket > 0:
+        print(f'    within-bucket metric loss: gamma={gamma_bucket}')
     model.to(device)
 
     for epoch in range(epochs):
         model.train()
-        tot_loss = tot_recon = tot_vq = tot_correct = tot_tokens = 0
+        tot_loss = tot_recon = tot_vq = tot_metric = tot_correct = tot_tokens = 0
         for batch in train_loader:
             digits = batch['digits'].to(device); p = batch['p'].to(device)
             opt.zero_grad()
-            logits, vq_loss, _, _, _ = model(digits, p)
+
+            z_q_bot, z_q_mid, z_q_top, idx_bot, idx_mid, idx_top, vq_loss = model.encode(digits, p)
+            logits = model.decode(z_q_bot, z_q_mid, z_q_top, p)
+
             B, N, C = logits.shape
             recon_flat = crit(logits.reshape(-1, C), digits.reshape(-1))
             recon = (recon_flat.reshape(B, N).mean(-1) *
                      torch.tensor([math.log(v.item())+1 for v in p], device=device)).mean()
             loss = recon + vq_loss
+            if gamma_bucket > 0:
+                metric_loss = _bucket_metric_loss(z_q_bot, idx_top, digits, p)
+                loss = loss + gamma_bucket * metric_loss
+                tot_metric += metric_loss.item() * B
+
             loss.backward(); opt.step()
             tot_loss += loss.item()*B; tot_recon += recon.item()*B; tot_vq += vq_loss.item()*B
             tot_correct += (torch.argmax(logits,-1)==digits).sum().item(); tot_tokens += B*N
@@ -56,8 +83,9 @@ def train_vqvae(model, train_loader, val_loader, epochs, lr, device):
                 digits=batch['digits'].to(device); p=batch['p'].to(device)
                 logits,_,_,_,_=model(digits,p)
                 vc+=(torch.argmax(logits,-1)==digits).sum().item(); vt+=digits.shape[0]*digits.shape[1]
+        metric_str = f' Metric {tot_metric/n:.4f}' if gamma_bucket > 0 else ''
         print(f'Epoch {epoch+1:02d}/{epochs} | Loss {tot_loss/n:.4f} '
-              f'(Recon {tot_recon/n:.4f} VQ {tot_vq/n:.4f}) | '
+              f'(Recon {tot_recon/n:.4f} VQ {tot_vq/n:.4f}{metric_str}) | '
               f'Train {ta*100:.2f}% | Val {vc/vt*100:.2f}%')
     return model
 
@@ -163,6 +191,8 @@ def main():
     parser.add_argument('--hyperbolic_top',   action='store_true',
                         help='Use Poincaré-ball top codebook instead of Euclidean')
     parser.add_argument('--top_curvature',    type=float, default=1.0)
+    parser.add_argument('--gamma_bucket',     type=float, default=0.0,
+                        help='Weight for within-bucket metric alignment loss on z_q_bot')
     parser.add_argument('--save_dir',         type=str,   default='./checkpoints/hierarchical_3level')
     args = parser.parse_args()
 
@@ -191,7 +221,8 @@ def main():
                              hyperbolic_top=args.hyperbolic_top,
                              top_curvature=args.top_curvature)
     print(f'Parameters: {sum(p.numel() for p in model.parameters()):,}')
-    model = train_vqvae(model, train_loader, val_loader, args.vqvae_epochs, args.lr, device)
+    model = train_vqvae(model, train_loader, val_loader, args.vqvae_epochs, args.lr, device,
+                        gamma_bucket=args.gamma_bucket)
     torch.save(model.state_dict(), f'{args.save_dir}/vqvae.pt')
 
     # Encode all
