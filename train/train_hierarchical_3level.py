@@ -23,7 +23,7 @@ from hierarchical_3level import (ThreeLevelVQVAE,
                                   ThreeLevelTopPriorGRU,
                                   ThreeLevelMidPriorGRU,
                                   ThreeLevelBotPriorGRU)
-from metric_alignment import compute_metric_loss
+from metric_alignment import compute_metric_loss, compute_supcon_loss
 
 
 # ── Stage 1: VQ-VAE ────────────────────────────────────────────────────────────
@@ -46,12 +46,14 @@ def _bucket_metric_loss(z_proj, idx_top, digits, p):
 
 
 def train_vqvae(model, train_loader, val_loader, epochs, lr, device,
-                gamma_bucket=0.0, warmup_epochs=0):
+                gamma_bucket=0.0, warmup_epochs=0, contrastive=False,
+                temperature=0.1):
     opt = optim.Adam(model.parameters(), lr=lr)
     crit = nn.CrossEntropyLoss(reduction='none')
+    loss_name = 'SupCon' if contrastive else 'Metric'
     print('\n--- Stage 1: Training Three-Level VQ-VAE ---')
     if gamma_bucket > 0:
-        print(f'    within-bucket metric loss: gamma={gamma_bucket}, '
+        print(f'    alignment loss: {loss_name} gamma={gamma_bucket}, '
               f'warmup={warmup_epochs} epochs (VQ-only before metric)')
     model.to(device)
 
@@ -73,13 +75,14 @@ def train_vqvae(model, train_loader, val_loader, epochs, lr, device,
             loss = recon + vq_loss
 
             if apply_metric:
-                # Re-encode to get z_q_bot; detach before pooling so metric
-                # gradient trains only model.metric_proj, not the encoder/VQ.
                 with torch.no_grad():
                     z_q_bot, _, _, _, _, idx_top_enc, _ = model.encode(digits, p)
                 z_pooled = z_q_bot.mean(dim=1).detach()          # [B, bot_dim]
                 z_proj   = model.metric_proj(z_pooled)           # [B, bot_dim]
-                metric_loss = _bucket_metric_loss(z_proj, idx_top_enc, digits, p)
+                if contrastive:
+                    metric_loss = compute_supcon_loss(z_proj, p, temperature=temperature)
+                else:
+                    metric_loss = _bucket_metric_loss(z_proj, idx_top_enc, digits, p)
                 loss = loss + gamma_bucket * metric_loss
                 tot_metric += metric_loss.item() * B
 
@@ -94,8 +97,8 @@ def train_vqvae(model, train_loader, val_loader, epochs, lr, device,
                 digits=batch['digits'].to(device); p=batch['p'].to(device)
                 logits,_,_,_,_=model(digits,p)
                 vc+=(torch.argmax(logits,-1)==digits).sum().item(); vt+=digits.shape[0]*digits.shape[1]
-        phase = 'metric' if apply_metric else 'warmup'
-        metric_str = f' Metric {tot_metric/n:.4f}' if apply_metric else ''
+        phase = 'supcon' if (apply_metric and contrastive) else ('metric' if apply_metric else 'warmup')
+        metric_str = f' {loss_name} {tot_metric/n:.4f}' if apply_metric else ''
         print(f'Epoch {epoch+1:02d}/{epochs} [{phase}] | Loss {tot_loss/n:.4f} '
               f'(Recon {tot_recon/n:.4f} VQ {tot_vq/n:.4f}{metric_str}) | '
               f'Train {ta*100:.2f}% | Val {vc/vt*100:.2f}%')
@@ -204,9 +207,13 @@ def main():
                         help='Use Poincaré-ball top codebook instead of Euclidean')
     parser.add_argument('--top_curvature',    type=float, default=1.0)
     parser.add_argument('--gamma_bucket',     type=float, default=0.0,
-                        help='Weight for within-bucket metric alignment loss on z_q_bot')
+                        help='Weight for alignment loss on metric_proj head')
     parser.add_argument('--warmup_epochs',   type=int,   default=8,
                         help='Epochs of VQ-only training before metric loss is applied')
+    parser.add_argument('--contrastive',     action='store_true',
+                        help='Use SupCon loss instead of MSE metric alignment')
+    parser.add_argument('--temperature',     type=float, default=0.1,
+                        help='Temperature for SupCon loss')
     parser.add_argument('--save_dir',         type=str,   default='./checkpoints/hierarchical_3level')
     args = parser.parse_args()
 
@@ -237,7 +244,9 @@ def main():
     print(f'Parameters: {sum(p.numel() for p in model.parameters()):,}')
     model = train_vqvae(model, train_loader, val_loader, args.vqvae_epochs, args.lr, device,
                         gamma_bucket=args.gamma_bucket,
-                        warmup_epochs=args.warmup_epochs)
+                        warmup_epochs=args.warmup_epochs,
+                        contrastive=args.contrastive,
+                        temperature=args.temperature)
     torch.save(model.state_dict(), f'{args.save_dir}/vqvae.pt')
 
     # Encode all

@@ -76,6 +76,48 @@ def compute_metric_loss(z, digits, p):
     
     return loss
 
+def compute_supcon_loss(z, p, temperature=0.1):
+    """
+    Supervised Contrastive loss (Khosla et al. 2020) using prime as the class label.
+
+    For each anchor i, positives are all j with same prime (j ≠ i).
+    Negatives are all k with different prime.
+
+    z   : [B, D] — projected representations (already detached from encoder)
+    p   : [B]    — prime bases (class labels)
+    temperature : float — scales cosine similarities before softmax
+    """
+    B = z.shape[0]
+    if B <= 1:
+        return torch.tensor(0.0, device=z.device)
+
+    z_norm = F.normalize(z, dim=-1)               # [B, D]
+    sim    = z_norm @ z_norm.T / temperature       # [B, B]
+
+    # Mask: same prime (excluding diagonal)
+    same  = (p.unsqueeze(0) == p.unsqueeze(1))     # [B, B] bool
+    diag  = torch.eye(B, dtype=torch.bool, device=z.device)
+    pos_mask = same & ~diag                        # [B, B]
+    neg_mask = ~same                               # [B, B] (cross-prime negatives)
+
+    # Need at least one positive for each anchor; skip anchors with none
+    has_pos = pos_mask.any(dim=1)
+    if not has_pos.any():
+        return torch.tensor(0.0, device=z.device)
+
+    # Log-sum-exp over all non-self pairs (denominator)
+    sim_masked = sim.masked_fill(diag, float('-inf'))
+    log_denom  = torch.logsumexp(sim_masked, dim=1)  # [B]
+
+    # For each anchor, mean log-prob over its positives
+    pos_sim = sim * pos_mask.float()                 # zero out non-positives
+    n_pos   = pos_mask.float().sum(dim=1).clamp(min=1)
+    log_num = (pos_sim - log_denom.unsqueeze(1)) * pos_mask.float()
+    loss_per = -log_num.sum(dim=1) / n_pos           # [B]
+
+    return loss_per[has_pos].mean()
+
+
 def compute_hyperbolic_metric_loss(z_ball, digits, p, manifold):
     """
     Metric alignment loss for Poincaré-ball latents.
