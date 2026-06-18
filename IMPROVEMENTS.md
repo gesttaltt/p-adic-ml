@@ -479,3 +479,43 @@ Samples at epoch 50 show structured periodic and alternating patterns across all
 **Diagnosis**: The 3-level VQ-VAE is **not stuck** — it learns in discrete staircase phases driven by codebook reorganization events (brief VQ loss spikes followed by accuracy jumps). The 15-epoch runs caught only Phase 1. At epoch 50 the model is entering Phase 3 and still improving.
 
 **Implication for Item 33**: The warmup of 8 epochs was far too short. The model needs at least 30–40 epochs to exit Phase 1 before a metric_proj head has solid representations to work with. A re-run of Item 33 with `--warmup_epochs 40 --vqvae_epochs 80` is the natural next step.
+
+---
+
+### 35. Warm-Start Metric Alignment — 40-Epoch Warmup (Re-run of Item 33) ✅
+
+**Problem**: Item 33's 8-epoch warmup captured only Phase 1 of the staircase learning pattern (val acc ~30%), giving the `metric_proj` head noisy representations and yielding Spearman r ≈ 0.011. Item 34 showed the model needs ≥30 epochs to exit Phase 1.
+
+**Experiment**: `--warmup_epochs 40 --vqvae_epochs 80 --gamma_bucket 1.0 --attention_decoder`. Checkpoint: `./checkpoints/hierarchical_3level_warmup40/`.
+
+**Result**:
+
+| Epoch range | Phase | Val acc | VQ loss | Metric loss |
+|:---:|:---:|:---:|:---:|:---:|
+| 1–40 | warmup (VQ only) | 27% → 34.6% | 0.03–0.14 | — |
+| 41–80 | metric (proj head) | 35% → **40.5%** | 0.21–0.58 | 0.357 → **0.184** |
+
+Per-prime recon at epoch 80 (vs. Item 33 at epoch 15):
+
+| Prime | Item 33 | Item 35 | Gain |
+|:---:|:---:|:---:|:---:|
+| p=2 | 53.9% | 59.9% | +6.0pp |
+| p=3 | 38.9% | 47.0% | +8.1pp |
+| p=5 | 26.4% | 36.2% | +9.8pp |
+| p=7 | 21.3% | 31.0% | +9.7pp |
+| p=11 | 14.2% | 23.6% | +9.4pp |
+
+Spearman r (metric_proj head vs. p-adic distances):
+
+| | Item 33 (8ep) | Item 35 (40ep) | Improvement |
+|:---|:---:|:---:|:---:|
+| raw z_q_bot | 0.008 | 0.017 | 2× |
+| metric_proj | 0.011 | **0.038** | **3.5×** |
+
+**Findings**:
+- VQ loss stable throughout metric phase (0.21–0.58, not diverging) — warm-start + detached head confirmed robust at 80 epochs
+- Metric loss halved (0.357 → 0.184) — head learned
+- Spearman r 3.5× better than Item 33 — directional improvement confirmed
+- Still well below target ≥0.2 — MSE-based metric loss may be too weak a signal for geometric organization
+
+**Conclusion**: The warm-start architecture scales correctly: more warmup → better base representations → better geometric alignment. But MSE alignment saturates around r ≈ 0.04. Next direction: replace MSE metric loss with a contrastive/triplet loss that directly pushes same-prime pairs together and different-prime pairs apart — this provides stronger gradient signal without depending on scale calibration.
