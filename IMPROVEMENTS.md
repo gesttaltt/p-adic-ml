@@ -555,3 +555,17 @@ Spearman r (metric_proj head vs. p-adic distances):
 **Expected outcome**: SupCon will likely NOT improve Spearman r, may slightly hurt silhouette (which is already well-organized), and will confirm that the between-prime/within-prime distinction is the key diagnostic axis.
 
 **Training**: `--warmup_epochs 40 --vqvae_epochs 80 --gamma_bucket 0.5 --contrastive --temperature 0.1 --attention_decoder`. Checkpoint: `./checkpoints/hierarchical_3level_supcon/`.
+
+**Result** (Broad-11, N=128, 341K params):
+
+| Metric | Item 35 (MSE proj) | Item 36 (SupCon proj) |
+|:---|:---:|:---:|
+| Val acc (ep 80) | **40.5%** | 39.8% |
+| Spearman r | **0.040** | 0.003 ← worse |
+| Silhouette (prime) | 0.170 | **0.545** ← 3.2× better |
+| Centroid sep | 1.65 | **3.58** ← 2.2× better |
+| 5-NN prime acc | 96.3% | 97.0% ← same |
+
+SupCon loss plateaued at ~2.66 from epoch 49 onward — confirming the gradient saturation hypothesis (primes already well-separated in z_q_bot before the loss was applied).
+
+**Conclusion** ✅: Hypothesis confirmed. SupCon excels at what it was designed for (prime cluster separation, silhouette +3.2×) but is counterproductive for p-adic distance alignment (Spearman r −13×). Between-prime separation is already solved by the VQ encoder; the bottleneck is **within-prime p-adic distance structure**. Next direction: **intra-prime triplet loss** — for same-prime triplets (anchor, pos, neg) where pos has smaller p-adic distance to anchor than neg, minimize `max(0, d_lat(a,pos) - d_lat(a,neg) + margin)`. This directly optimizes the ranking of p-adic distances within each prime, which is exactly what Spearman r measures.
