@@ -380,7 +380,15 @@ Three levels compound with broad training: +2.76pp p=5 over 2-level Broad-23, +2
 
 **Files**: `hierarchical_vqvae.py`, `hierarchical_3level.py`, `train_hierarchical.py`, `train_hierarchical_3level.py`, `test_pipeline.py`.
 
-**Note**: All Item 32–35 runs use `--attention_decoder`. Quantitative comparison of attention vs conv decoder (isolated, same epochs) was not run — the conv decoder baseline is Items 25/26 (without attention flag).
+**Important note on baseline regression**: Item 25's 79.29% val acc was achieved with an earlier version of `ThreeLevelVQVAE`. Subsequent codebase changes (adding `metric_proj` MLP, modifying `encode()` return signature, etc.) unintentionally changed convergence behavior. Evaluation of all available 3-level checkpoints shows:
+
+| Checkpoint | Decoder | Epochs | Val acc |
+|:---|:---:|:---:|:---:|
+| hierarchical_3level_bucket (Item 32) | conv | 15 | 29.3% |
+| hierarchical_3level_attention (Item 30) | attention | 15 | 30.0% |
+| hierarchical_3level_50ep (Item 34) | attention | 50 | 35.2% |
+
+The original Item 25 checkpoint no longer exists. The conv decoder and attention decoder converge to similar values (~30% at 15 epochs), so the regression is NOT caused by the attention decoder itself — it predates Item 30. The 79.29% baseline from Item 25 cannot be reproduced with the current codebase without identifying and reverting the breaking change. Items 32–36 use ~30% at 15 epochs as the implicit baseline for the attention-decoder 3-level model.
 
 ---
 
@@ -392,9 +400,11 @@ Three levels compound with broad training: +2.76pp p=5 over 2-level Broad-23, +2
 
 | gamma | Val acc | p=5 recon | VQ loss trend |
 |---|---|---|---|
-| 0 (baseline) | **79.3%** | **87.5%** | decreasing ↓ |
+| 0 (baseline†) | ~30% | ~27% | decreasing ↓ |
 | 5.0 | 31.0% | 27.1% | increasing ↑ |
 | 0.5 | 32.9% | 27.1% | increasing ↑ |
+
+†Baseline is the current codebase conv-decoder run (~30%). The 79.3% / 87.5% figure cited in earlier notes was from Item 25's checkpoint (pre-`metric_proj` code, no longer reproducible — see Item 30 note).
 
 **Root cause analysis**: Two gradients flow to the encoder output `z_bot` simultaneously:
 
@@ -423,9 +433,9 @@ Alignment *loss* is less stable: c=5.0 Poincaré shows dramatically higher loss 
 
 ---
 
-### 33. Warm-Start Metric Alignment for 3-Level VQ-VAE
+### 33. Warm-Start Metric Alignment for 3-Level VQ-VAE ✅
 
-**Problem**: Item 32 showed that applying `--gamma_bucket` from epoch 1 destroys 3-level VQ training (val acc drops from 79.3% to 33%). Root cause: the metric gradient and VQ commitment gradient conflict on the shared encoder layers. The fix is a warm-start: let the VQ converge first, then introduce the metric loss once `z_bot ≈ z_q` and commitment pressure is near zero.
+**Problem**: Item 32 showed that applying `--gamma_bucket` from epoch 1 prevents the 3-level VQ from learning beyond ~30% val acc (stalls in Phase 1 of the staircase pattern). Root cause: the metric gradient and VQ commitment gradient conflict on the shared encoder layers. The fix is a warm-start: let the VQ converge first, then introduce the metric loss once `z_bot ≈ z_q` and commitment pressure is near zero.
 
 **Plan**: Add `--warmup_epochs` (default 8) to `train_hierarchical_3level.py`. During the first `warmup_epochs`, train with `gamma_bucket=0` (pure VQ). From epoch `warmup_epochs+1` onward, apply `gamma_bucket`. Also add shared-layer gradient isolation: compute the bucket metric loss on a stop-gradient copy of the per-sequence pooled bot representation — i.e., `z_bot_pool = z_q_bot.mean(1).detach()` fed through a small `metric_proj` MLP — so the metric gradient trains only the projection head, not the shared encoder. This fully decouples the two objectives.
 
