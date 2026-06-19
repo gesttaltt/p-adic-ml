@@ -380,6 +380,8 @@ Three levels compound with broad training: +2.76pp p=5 over 2-level Broad-23, +2
 
 **Files**: `hierarchical_vqvae.py`, `hierarchical_3level.py`, `train_hierarchical.py`, `train_hierarchical_3level.py`, `test_pipeline.py`.
 
+**Note**: All Item 32–35 runs use `--attention_decoder`. Quantitative comparison of attention vs conv decoder (isolated, same epochs) was not run — the conv decoder baseline is Items 25/26 (without attention flag).
+
 ---
 
 ### 32. Within-Bucket Metric Alignment for 3-Level VQ-VAE ✅
@@ -519,3 +521,27 @@ Spearman r (metric_proj head vs. p-adic distances):
 - Still well below target ≥0.2 — MSE-based metric loss may be too weak a signal for geometric organization
 
 **Conclusion**: The warm-start architecture scales correctly: more warmup → better base representations → better geometric alignment. But MSE alignment saturates around r ≈ 0.04. Next direction: replace MSE metric loss with a contrastive/triplet loss that directly pushes same-prime pairs together and different-prime pairs apart — this provides stronger gradient signal without depending on scale calibration.
+
+---
+
+### 36. SupCon Loss for Metric Alignment
+
+**Problem**: Item 35 showed MSE metric loss saturates at Spearman r ≈ 0.04. Hypothesis: a contrastive loss with stronger gradient signal (Supervised Contrastive, Khosla et al. 2020) using prime as the class label would do better.
+
+**Implementation**: `compute_supcon_loss(z, p, temperature)` in `src/metric_alignment.py`. For each anchor i, positives = same-prime sequences, negatives = cross-prime sequences. NT-Xent loss over cosine similarities. CLI: `--contrastive --temperature 0.1`.
+
+**Pre-run diagnostic** (from `eval/eval_supcon_alignment.py` on Item 35 checkpoint):
+
+| Metric | raw z_q_bot | metric_proj (MSE) |
+|:---|:---:|:---:|
+| 1-NN prime accuracy | **99.8%** | 99.9% |
+| 5-NN prime accuracy | 97.0% | 96.3% |
+| Silhouette (prime) | **0.339** | 0.170 |
+| Centroid sep. ratio | **2.78** | 1.65 |
+| Spearman r (mean) | 0.024 | 0.040 |
+
+**Key finding before running**: The raw `z_q_bot` already achieves near-perfect prime separability (99.8% 1-NN, silhouette 0.34). SupCon pushes same-prime clusters tighter and different-prime clusters farther apart — but this is already essentially solved. The SupCon gradient will be nearly saturated from epoch 1. The Spearman r bottleneck is **within-prime p-adic distance structure**, which SupCon ignores entirely (it treats all same-prime pairs as equally positive, regardless of p-adic proximity).
+
+**Expected outcome**: SupCon will likely NOT improve Spearman r, may slightly hurt silhouette (which is already well-organized), and will confirm that the between-prime/within-prime distinction is the key diagnostic axis.
+
+**Training**: `--warmup_epochs 40 --vqvae_epochs 80 --gamma_bucket 0.5 --contrastive --temperature 0.1 --attention_decoder`. Checkpoint: `./checkpoints/hierarchical_3level_supcon/`.
