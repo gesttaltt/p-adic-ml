@@ -23,7 +23,7 @@ from hierarchical_3level import (ThreeLevelVQVAE,
                                   ThreeLevelTopPriorGRU,
                                   ThreeLevelMidPriorGRU,
                                   ThreeLevelBotPriorGRU)
-from metric_alignment import compute_metric_loss, compute_supcon_loss
+from metric_alignment import compute_metric_loss, compute_supcon_loss, compute_triplet_loss
 
 
 # ── Stage 1: VQ-VAE ────────────────────────────────────────────────────────────
@@ -47,10 +47,10 @@ def _bucket_metric_loss(z_proj, idx_top, digits, p):
 
 def train_vqvae(model, train_loader, val_loader, epochs, lr, device,
                 gamma_bucket=0.0, warmup_epochs=0, contrastive=False,
-                temperature=0.1):
+                temperature=0.1, triplet=False, margin=0.5):
     opt = optim.Adam(model.parameters(), lr=lr)
     crit = nn.CrossEntropyLoss(reduction='none')
-    loss_name = 'SupCon' if contrastive else 'Metric'
+    loss_name = 'SupCon' if contrastive else ('Triplet' if triplet else 'Metric')
     print('\n--- Stage 1: Training Three-Level VQ-VAE ---')
     if gamma_bucket > 0:
         print(f'    alignment loss: {loss_name} gamma={gamma_bucket}, '
@@ -81,6 +81,8 @@ def train_vqvae(model, train_loader, val_loader, epochs, lr, device,
                 z_proj   = model.metric_proj(z_pooled)           # [B, bot_dim]
                 if contrastive:
                     metric_loss = compute_supcon_loss(z_proj, p, temperature=temperature)
+                elif triplet:
+                    metric_loss = compute_triplet_loss(z_proj, digits, p, margin=margin)
                 else:
                     metric_loss = _bucket_metric_loss(z_proj, idx_top_enc, digits, p)
                 loss = loss + gamma_bucket * metric_loss
@@ -97,7 +99,10 @@ def train_vqvae(model, train_loader, val_loader, epochs, lr, device,
                 digits=batch['digits'].to(device); p=batch['p'].to(device)
                 logits,_,_,_,_=model(digits,p)
                 vc+=(torch.argmax(logits,-1)==digits).sum().item(); vt+=digits.shape[0]*digits.shape[1]
-        phase = 'supcon' if (apply_metric and contrastive) else ('metric' if apply_metric else 'warmup')
+        if apply_metric:
+            phase = 'supcon' if contrastive else ('triplet' if triplet else 'metric')
+        else:
+            phase = 'warmup'
         metric_str = f' {loss_name} {tot_metric/n:.4f}' if apply_metric else ''
         print(f'Epoch {epoch+1:02d}/{epochs} [{phase}] | Loss {tot_loss/n:.4f} '
               f'(Recon {tot_recon/n:.4f} VQ {tot_vq/n:.4f}{metric_str}) | '
@@ -214,6 +219,10 @@ def main():
                         help='Use SupCon loss instead of MSE metric alignment')
     parser.add_argument('--temperature',     type=float, default=0.1,
                         help='Temperature for SupCon loss')
+    parser.add_argument('--triplet',         action='store_true',
+                        help='Use intra-prime triplet loss for p-adic distance ranking')
+    parser.add_argument('--margin',          type=float, default=0.5,
+                        help='Margin for triplet loss')
     parser.add_argument('--save_dir',         type=str,   default='./checkpoints/hierarchical_3level')
     args = parser.parse_args()
 
@@ -246,7 +255,9 @@ def main():
                         gamma_bucket=args.gamma_bucket,
                         warmup_epochs=args.warmup_epochs,
                         contrastive=args.contrastive,
-                        temperature=args.temperature)
+                        temperature=args.temperature,
+                        triplet=args.triplet,
+                        margin=args.margin)
     torch.save(model.state_dict(), f'{args.save_dir}/vqvae.pt')
 
     # Encode all

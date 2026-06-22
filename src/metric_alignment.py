@@ -118,6 +118,54 @@ def compute_supcon_loss(z, p, temperature=0.1):
     return loss_per[has_pos].mean()
 
 
+def compute_triplet_loss(z, digits, p, margin=0.5):
+    """
+    Intra-prime triplet loss: for same-prime triplets (anchor, pos, neg) where
+    d_padic(anchor, pos) < d_padic(anchor, neg), minimize:
+        max(0, d_lat(anchor, pos) - d_lat(anchor, neg) + margin)
+
+    All three elements of a triplet share the same prime.
+    This directly optimizes the p-adic distance ranking within each prime,
+    which is exactly what Spearman r measures.
+    """
+    B = z.shape[0]
+    if B <= 2:
+        return torch.tensor(0.0, device=z.device)
+
+    losses = []
+    for p_val in p.unique():
+        mask = p == p_val
+        K = mask.sum().item()
+        if K < 3:
+            continue
+
+        z_p   = z[mask]
+        dig_p = digits[mask]
+        p_p   = p[mask]
+
+        d_pad = batch_padic_distance(dig_p, p_p)                         # [K, K]
+        d_lat = (z_p.unsqueeze(1) - z_p.unsqueeze(0)).norm(dim=-1)       # [K, K]
+
+        eye = torch.eye(K, dtype=torch.bool, device=z.device)
+
+        # valid[a, pos, neg]: d_padic(a,pos) < d_padic(a,neg), all indices distinct
+        pos_closer = d_pad.unsqueeze(2) < d_pad.unsqueeze(1)             # [K, K, K]
+        valid = (pos_closer
+                 & ~eye.unsqueeze(2)
+                 & ~eye.unsqueeze(1)
+                 & ~eye.unsqueeze(0))
+
+        if not valid.any():
+            continue
+
+        triplet = F.relu(d_lat.unsqueeze(2) - d_lat.unsqueeze(1) + margin)  # [K, K, K]
+        losses.append((triplet * valid.float()).sum() / valid.float().sum().clamp(min=1))
+
+    if not losses:
+        return torch.tensor(0.0, device=z.device)
+    return torch.stack(losses).mean()
+
+
 def compute_hyperbolic_metric_loss(z_ball, digits, p, manifold):
     """
     Metric alignment loss for Poincaré-ball latents.

@@ -569,3 +569,27 @@ Spearman r (metric_proj head vs. p-adic distances):
 SupCon loss plateaued at ~2.66 from epoch 49 onward — confirming the gradient saturation hypothesis (primes already well-separated in z_q_bot before the loss was applied).
 
 **Conclusion** ✅: Hypothesis confirmed. SupCon excels at what it was designed for (prime cluster separation, silhouette +3.2×) but is counterproductive for p-adic distance alignment (Spearman r −13×). Between-prime separation is already solved by the VQ encoder; the bottleneck is **within-prime p-adic distance structure**. Next direction: **intra-prime triplet loss** — for same-prime triplets (anchor, pos, neg) where pos has smaller p-adic distance to anchor than neg, minimize `max(0, d_lat(a,pos) - d_lat(a,neg) + margin)`. This directly optimizes the ranking of p-adic distances within each prime, which is exactly what Spearman r measures.
+
+---
+
+### 37. Intra-Prime Triplet Loss for P-adic Distance Ranking 🔄
+
+**Motivation**: Items 35 and 36 established that the latent space bottleneck is *within-prime* p-adic distance structure. Raw `z_q_bot` already separates primes perfectly (99.8% 1-NN), but Spearman r saturates at ~0.04 with MSE loss and degrades to ~0.003 with SupCon. The root cause: neither loss explicitly optimizes the *ranking* of distances within a prime.
+
+**Approach**: Intra-prime triplet loss. For every same-prime triplet `(anchor a, positive pos, negative neg)` where `d_padic(a, pos) < d_padic(a, neg)`, minimize:
+
+```
+max(0, d_lat(a, pos) - d_lat(a, neg) + margin)
+```
+
+This is a standard margin ranking loss applied to p-adic distance order. It directly trains the metric_proj head to rank latent distances consistently with p-adic distances within each prime — the exact quantity Spearman r measures.
+
+**Key difference from MSE**: MSE tries to match absolute distance magnitudes (scale-sensitive), which is hard with ultrametric distances that are clustered at discrete powers of `p`. Triplet loss only requires correct *ordering*, which is a weaker and more achievable target.
+
+**Architecture**: Same as Item 35 (warm-start + detached `metric_proj` head). Only the loss function changes.
+
+**Implementation**: `compute_triplet_loss(z, digits, p, margin)` in `src/metric_alignment.py`. For each prime in the batch, builds `[K, K, K]` valid-triplet mask (d_padic order), computes `relu(d_lat_ap - d_lat_an + margin)`, averages over valid triplets.
+
+**Training**: `--warmup_epochs 40 --vqvae_epochs 80 --gamma_bucket 0.5 --triplet --margin 0.5 --attention_decoder`. Checkpoint: `./checkpoints/hierarchical_3level_triplet/`.
+
+**Result**: *pending — training in progress*
